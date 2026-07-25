@@ -102,7 +102,12 @@ class UserConfig(SQLModel, table=True):
     binance_testnet: bool = Field(default=True)
 
     # Watchlist
-    watchlist_csv: str = Field(default="BTCUSDT,ETHUSDT,SOLUSDT")
+    watchlist_csv: str = Field(
+        default=(
+            "ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,"
+            "ADAUSDT,AVAXUSDT,LINKUSDT,SUIUSDT,1000PEPEUSDT"
+        )
+    )
 
     # Multi-timeframe
     bias_tf: str = Field(default="4h")

@@ -55,7 +55,10 @@ class Settings(BaseSettings):
     PAPER_START_BALANCE: float = 1000.0
     RISK_PER_TRADE_PCT: float = 1.0
     DEFAULT_LEVERAGE: int = 5
-    DEFAULT_WATCHLIST: str = "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT"
+    DEFAULT_WATCHLIST: str = (
+        "ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,"
+        "ADAUSDT,AVAXUSDT,LINKUSDT,SUIUSDT,1000PEPEUSDT"
+    )
 
     # Multi-timeframe defaults (user-editable in UI)
     BIAS_TIMEFRAME: str = "4h"
