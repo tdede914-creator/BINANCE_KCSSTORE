@@ -15,8 +15,24 @@ export interface KlinesResponse {
   candles: Candle[];
 }
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+/**
+ * Resolve the backend URL.
+ *
+ * NEXT_PUBLIC_API_URL is baked into the client bundle at build time. When
+ * unset (the usual case for self-hosted deployments), we derive the URL
+ * from the page's own host at runtime so the frontend can be accessed
+ * from any IP / domain without a rebuild. The port matches the one the
+ * backend service listens on in docker-compose (8000).
+ */
+function resolveApiUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+  return "http://localhost:8000";
+}
+
+const API_URL = resolveApiUrl();
 
 async function request<T>(
   path: string,

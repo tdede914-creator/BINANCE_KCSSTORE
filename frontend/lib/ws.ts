@@ -2,8 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const WS_URL =
-  process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+/**
+ * Resolve the backend WebSocket URL.
+ *
+ * See ``resolveApiUrl`` in ``lib/api.ts`` for the reasoning; same logic
+ * applies, but we swap http(s) → ws(s).
+ */
+function resolveWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.hostname}:8000`;
+  }
+  return "ws://localhost:8000";
+}
+
+const WS_URL = resolveWsUrl();
 
 export interface WsEvent {
   type: string;
