@@ -52,9 +52,15 @@ def create_app() -> FastAPI:
     )
 
     # CORS
+    # We accept any origin because this bot is a self-hosted single-user
+    # app: users typically load the frontend from http://<vps-ip>:3000 or
+    # http://localhost:3000 or their own domain, and none of those can be
+    # known ahead of time. Since we do not rely on cookies (JWT is passed
+    # as an Authorization header when auth is enabled), permissive CORS
+    # does not open a real attack surface here.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.FRONTEND_ORIGIN, "http://localhost:3000"],
+        allow_origin_regex=".*",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
