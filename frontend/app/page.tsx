@@ -9,6 +9,7 @@ import { StatCard } from "@/components/StatCard";
 import { SignalCard } from "@/components/SignalCard";
 import { TradeRow } from "@/components/TradeRow";
 import { formatUsdt } from "@/lib/format";
+import type { ChannelInfo } from "@/components/PriceChart";
 
 // lightweight-charts touches window/ResizeObserver — load it browser-only.
 const PriceChart = dynamic(
@@ -37,12 +38,16 @@ export default function DashboardPage() {
   // chart context survives a page reload.
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   const [chartTf, setChartTf] = useState<string | null>(null);
+  const [showChannel, setShowChannel] = useState(false);
+  const [channelInfo, setChannelInfo] = useState<ChannelInfo | null>(null);
 
   useEffect(() => {
     const s = localStorage.getItem("kcs.chart.symbol");
     const tf = localStorage.getItem("kcs.chart.tf");
+    const ch = localStorage.getItem("kcs.chart.showChannel");
     if (s) setChartSymbol(s);
     if (tf) setChartTf(tf);
+    if (ch === "1") setShowChannel(true);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -87,6 +92,19 @@ export default function DashboardPage() {
     setChartTf(tf);
     localStorage.setItem("kcs.chart.tf", tf);
   };
+  const toggleChannel = () => {
+    setShowChannel((cur) => {
+      const next = !cur;
+      localStorage.setItem("kcs.chart.showChannel", next ? "1" : "0");
+      if (!next) setChannelInfo(null);
+      return next;
+    });
+  };
+
+  // Stable callback so PriceChart doesn't refetch on every dashboard tick.
+  const handleChannelInfo = useCallback((info: ChannelInfo | null) => {
+    setChannelInfo(info);
+  }, []);
 
   const toggleScanner = async () => {
     if (!cfg) return;
@@ -223,6 +241,9 @@ export default function DashboardPage() {
                 )}
               </span>
             )}
+            {showChannel && channelInfo && (
+              <ChannelBadge info={channelInfo} />
+            )}
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -252,6 +273,18 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
+            <button
+              onClick={toggleChannel}
+              className={clsx(
+                "px-2.5 py-1 rounded text-xs font-mono border",
+                showChannel
+                  ? "bg-teal-500/20 text-teal-300 border-teal-400/40"
+                  : "text-muted hover:text-white border-border",
+              )}
+              title="Auto-draw a regression parallel channel over the last 100 candles"
+            >
+              Channel
+            </button>
           </div>
         </div>
 
@@ -265,6 +298,8 @@ export default function DashboardPage() {
             openTrades={openTradesForSymbol}
             testnet={cfg.binance_testnet}
             height={480}
+            showChannel={showChannel}
+            onChannelInfo={handleChannelInfo}
           />
         ) : (
           <div className="h-[480px] bg-bg-soft rounded flex items-center justify-center text-muted text-sm">
@@ -279,6 +314,9 @@ export default function DashboardPage() {
           <LegendDot color="#8892b0" label="Entry (dashed)" />
           <LegendDot color="#e74c3c" label="SL" />
           <LegendDot color="#2ecc71" label="TP1/TP2" />
+          {showChannel && (
+            <LegendDot color="#14b8a6" label="Regression channel" />
+          )}
         </div>
       </section>
 
@@ -353,6 +391,25 @@ function LegendDot({ color, label }: { color: string; label: string }) {
         style={{ backgroundColor: color }}
       />
       {label}
+    </span>
+  );
+}
+
+function ChannelBadge({ info }: { info: ChannelInfo }) {
+  const up = info.slope_pct_total >= 0;
+  const arrow = up ? "▲" : "▼";
+  return (
+    <span
+      className={clsx(
+        "text-xs font-mono px-2 py-0.5 rounded border",
+        up
+          ? "bg-long/10 text-long border-long/40"
+          : "bg-short/10 text-short border-short/40",
+      )}
+      title={`Regression channel over ${info.lookback} candles`}
+    >
+      {arrow} {info.slope_pct_total >= 0 ? "+" : ""}
+      {info.slope_pct_total.toFixed(2)}% · width {info.width_pct.toFixed(2)}%
     </span>
   );
 }

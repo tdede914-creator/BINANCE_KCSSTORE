@@ -15,6 +15,29 @@ export interface KlinesResponse {
   candles: Candle[];
 }
 
+export interface ChannelPoint {
+  time: number; // unix seconds
+  price: number;
+}
+
+export interface ChannelLine {
+  start: ChannelPoint;
+  end: ChannelPoint;
+}
+
+export interface ChannelResponse {
+  symbol: string;
+  interval: string;
+  lookback: number;
+  upper: ChannelLine;
+  midline: ChannelLine;
+  lower: ChannelLine;
+  slope_per_bar: number;
+  slope_pct_total: number;
+  stddev: number;
+  width_pct: number;
+}
+
 /**
  * Resolve the backend URL.
  *
@@ -123,6 +146,18 @@ export const api = {
     request<{ symbol: string; price: number }>(
       `/api/market/ticker?symbol=${encodeURIComponent(symbol)}`,
     ),
+  getChannel: (params: {
+    symbol: string;
+    interval: string;
+    lookback?: number;
+  }) => {
+    const qs = new URLSearchParams({
+      symbol: params.symbol,
+      interval: params.interval,
+    });
+    if (params.lookback) qs.set("lookback", String(params.lookback));
+    return request<ChannelResponse>(`/api/market/channel?${qs.toString()}`);
+  },
 };
 
 export { API_URL };

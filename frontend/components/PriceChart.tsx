@@ -22,6 +22,12 @@ import type { Trade } from "@/lib/types";
 // Public props
 // --------------------------------------------------------------------------
 
+export interface ChannelInfo {
+  slope_pct_total: number;
+  width_pct: number;
+  lookback: number;
+}
+
 export interface PriceChartProps {
   symbol: string;
   interval: string;
@@ -32,6 +38,12 @@ export interface PriceChartProps {
   openTrades?: Trade[];
   testnet?: boolean;
   height?: number;
+  /** When true, fetch and draw an auto parallel channel over the chart. */
+  showChannel?: boolean;
+  /** Number of candles the regression is fit over. Default 100. */
+  channelLookback?: number;
+  /** Callback with slope% / width% for the parent to show a badge. */
+  onChannelInfo?: (info: ChannelInfo | null) => void;
 }
 
 // --------------------------------------------------------------------------
@@ -56,6 +68,9 @@ export function PriceChart({
   openTrades = [],
   testnet = false,
   height = 460,
+  showChannel = false,
+  channelLookback = 100,
+  onChannelInfo,
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -64,6 +79,16 @@ export function PriceChart({
   const emaSlowSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const emaTriggerSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+
+  // Channel series refs (created lazily when showChannel toggles on).
+  const channelUpperRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const channelMidRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const channelLowerRef = useRef<ISeriesApi<"Line"> | null>(null);
+
+  // Keep the onChannelInfo callback in a ref so we don't have to include it
+  // in the effect's deps (avoids re-fetching when the parent re-renders).
+  const onChannelInfoRef = useRef(onChannelInfo);
+  onChannelInfoRef.current = onChannelInfo;
 
   // Live-updated EMA state (mutable so we don't recompute the whole array per tick).
   const lastEmaFast = useRef<number | null>(null);
@@ -147,6 +172,9 @@ export function PriceChart({
       emaFastSeriesRef.current = null;
       emaSlowSeriesRef.current = null;
       emaTriggerSeriesRef.current = null;
+      channelUpperRef.current = null;
+      channelMidRef.current = null;
+      channelLowerRef.current = null;
       priceLinesRef.current = [];
     };
     // We intentionally only build the chart once; EMA period changes flow into
@@ -327,6 +355,102 @@ export function PriceChart({
       );
     }
   }, [openTrades, symbol]);
+
+  // ---- 4. Auto parallel channel (regression) ---------------------------
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    // Helper — remove any existing channel series and clear the badge.
+    const clearChannel = () => {
+      for (const r of [channelUpperRef, channelMidRef, channelLowerRef]) {
+        if (r.current) {
+          try {
+            chart.removeSeries(r.current);
+          } catch {
+            /* series already removed */
+          }
+          r.current = null;
+        }
+      }
+      onChannelInfoRef.current?.(null);
+    };
+
+    if (!showChannel) {
+      clearChannel();
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const resp = await api.getChannel({
+          symbol,
+          interval,
+          lookback: channelLookback,
+        });
+        if (cancelled || !chartRef.current) return;
+
+        // Create the 3 line series lazily on first show.
+        if (!channelUpperRef.current) {
+          channelUpperRef.current = chart.addLineSeries({
+            color: "#14b8a6",
+            lineWidth: 2,
+            lineStyle: LineStyle.Dashed,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: "Ch Up",
+          });
+        }
+        if (!channelMidRef.current) {
+          channelMidRef.current = chart.addLineSeries({
+            color: "#14b8a6",
+            lineWidth: 1,
+            lineStyle: LineStyle.Dotted,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: "Ch Mid",
+          });
+        }
+        if (!channelLowerRef.current) {
+          channelLowerRef.current = chart.addLineSeries({
+            color: "#14b8a6",
+            lineWidth: 2,
+            lineStyle: LineStyle.Dashed,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: "Ch Lo",
+          });
+        }
+
+        const toPts = (ln: {
+          start: { time: number; price: number };
+          end: { time: number; price: number };
+        }): LineData[] => [
+          { time: ln.start.time as UTCTimestamp, value: ln.start.price },
+          { time: ln.end.time as UTCTimestamp, value: ln.end.price },
+        ];
+
+        channelUpperRef.current.setData(toPts(resp.upper));
+        channelMidRef.current.setData(toPts(resp.midline));
+        channelLowerRef.current.setData(toPts(resp.lower));
+
+        onChannelInfoRef.current?.({
+          slope_pct_total: resp.slope_pct_total,
+          width_pct: resp.width_pct,
+          lookback: resp.lookback,
+        });
+      } catch (e) {
+        console.error("chart.load_channel_failed", e);
+        onChannelInfoRef.current?.(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showChannel, symbol, interval, channelLookback]);
 
   return (
     <div
