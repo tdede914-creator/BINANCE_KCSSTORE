@@ -250,6 +250,61 @@ export default function SettingsPage() {
         </div>
       </Section>
 
+      {/* Trailing Stop */}
+      <Section
+        title="Trailing Stop"
+        hint="SL that follows price in the favorable direction (never widens). Activates only after price moves in your favor by 'Activation RR' (in units of initial risk)."
+      >
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Field label="Mode">
+            <select
+              value={cfg.trailing_mode}
+              onChange={(e) =>
+                patch({ trailing_mode: e.target.value as "off" | "atr" | "percent" })
+              }
+              className="bg-bg-soft border border-border rounded px-3 py-2 text-sm w-full"
+              disabled={saving}
+            >
+              <option value="off">OFF (fixed SL/BE after TP1)</option>
+              <option value="atr">ATR-based</option>
+              <option value="percent">Percent-based</option>
+            </select>
+          </Field>
+          <Field label="Activation RR">
+            <NumberInput
+              value={cfg.trailing_activation_rr}
+              onCommit={(v) => patch({ trailing_activation_rr: v })}
+              step={0.1}
+              min={0}
+              max={20}
+            />
+          </Field>
+          <Field label="ATR × multiplier">
+            <NumberInput
+              value={cfg.trailing_atr_mult}
+              onCommit={(v) => patch({ trailing_atr_mult: v })}
+              step={0.1}
+              min={0.1}
+              max={10}
+            />
+          </Field>
+          <Field label="Trail distance (%)">
+            <NumberInput
+              value={cfg.trailing_percent}
+              onCommit={(v) => patch({ trailing_percent: v })}
+              step={0.1}
+              min={0.05}
+              max={20}
+            />
+          </Field>
+        </div>
+        <p className="text-xs text-muted mt-3">
+          <span className="text-long">Tip:</span> <code>Activation RR = 0</code> trails from entry
+          immediately. <code>1.0</code> starts trailing once price hits TP1 level.
+          ATR mode uses the ATR captured at signal time (entry TF); PERCENT mode uses live price.
+        </p>
+      </Section>
+
       {/* Strategy tuning */}
       <Section title="Strategy parameters">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">

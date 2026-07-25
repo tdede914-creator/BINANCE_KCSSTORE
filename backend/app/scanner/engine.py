@@ -41,6 +41,8 @@ from app.executor.base import BaseExecutor
 from app.executor.live import LiveExecutor
 from app.executor.paper import PaperExecutor
 from app.risk.manager import RiskManager, RiskRejected
+from app.risk.trailing import TrailingConfig
+from app.strategy.indicators import atr as atr_series
 from app.strategy.mtf_confluence import MTFConfluenceStrategy
 from app.strategy.types import SignalProposal, StrategyContext
 
@@ -172,11 +174,19 @@ class ScannerEngine:
             log.info("scanner.risk_rejected", symbol=symbol, reason=str(e))
             return
 
+        # Snapshot entry-TF ATR for trailing (last valid value).
+        atr_snapshot = self._entry_atr_snapshot(entry_df, cfg.atr_period)
+        trailing_cfg = TrailingConfig.from_user_config(cfg, atr_snapshot=atr_snapshot)
+
         # Persist signal + execute
         signal = await self._save_signal(proposal, sized, cfg)
 
         executor = self._executor_for(cfg)
-        result = await executor.open_trade(sized, signal_id=signal.id)
+        result = await executor.open_trade(
+            sized,
+            signal_id=signal.id,
+            trailing=trailing_cfg,
+        )
 
         if result.ok and result.trade is not None:
             async with session_scope() as session:
@@ -219,6 +229,19 @@ class ScannerEngine:
     # ----------------------------------------------------------------------
     # Helpers
     # ----------------------------------------------------------------------
+
+    @staticmethod
+    def _entry_atr_snapshot(entry_df, period: int) -> float:
+        """Compute the latest ATR value from the entry-TF DataFrame.
+
+        Used as a stable reference for ATR-based trailing so the trail
+        distance doesn't drift as market volatility changes.
+        """
+        try:
+            series = atr_series(entry_df, period=period).dropna()
+            return float(series.iloc[-1]) if len(series) else 0.0
+        except Exception:  # noqa: BLE001
+            return 0.0
 
     async def _load_config(self) -> UserConfig:
         async with session_scope() as session:

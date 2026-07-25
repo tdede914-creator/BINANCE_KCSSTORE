@@ -36,6 +36,19 @@ class TradingMode(str, Enum):
     LIVE = "live"
 
 
+class TrailingMode(str, Enum):
+    """Trailing-stop algorithm mode.
+
+    - OFF:     no trailing, SL is fixed (may still move to BE after TP1 hit)
+    - ATR:     SL = extreme_price ± N × ATR(entry TF, snapshot at signal time)
+    - PERCENT: SL = extreme_price × (1 ± X / 100)
+    """
+
+    OFF = "off"
+    ATR = "atr"
+    PERCENT = "percent"
+
+
 # ==========================================================================
 # Models
 # ==========================================================================
@@ -89,6 +102,14 @@ class UserConfig(SQLModel, table=True):
     atr_sl_mult: float = Field(default=0.5)
     rr_tp1: float = Field(default=2.0)
     rr_tp2: float = Field(default=3.0)
+
+    # Trailing stop
+    trailing_mode: TrailingMode = Field(default=TrailingMode.OFF)
+    # RR (in units of initial risk) that price must move in favor before
+    # trailing "activates". 0 = trail from entry, 1 = trail after TP1, etc.
+    trailing_activation_rr: float = Field(default=1.0)
+    trailing_atr_mult: float = Field(default=1.5)
+    trailing_percent: float = Field(default=1.0)  # 1.0 = 1%
 
     # Paper trading equity
     paper_balance: float = Field(default=1000.0)
@@ -175,6 +196,17 @@ class Trade(SQLModel, table=True):
     sl_order_id: str | None = Field(default=None)
     tp1_order_id: str | None = Field(default=None)
     tp2_order_id: str | None = Field(default=None)
+
+    # Trailing stop state — populated at trade open, updated by reconciler
+    trailing_mode: TrailingMode = Field(default=TrailingMode.OFF)
+    trailing_activation_rr: float = Field(default=1.0)
+    trailing_atr_mult: float = Field(default=1.5)
+    trailing_percent: float = Field(default=1.0)
+    trailing_atr_snapshot: float = Field(default=0.0)  # ATR at signal time, cached
+    trailing_active: bool = Field(default=False)       # activation threshold crossed?
+    highest_price: float | None = Field(default=None)  # for LONG
+    lowest_price: float | None = Field(default=None)   # for SHORT
+    initial_sl: float | None = Field(default=None)     # remember original SL for RR calc
 
     status: SignalStatus = Field(default=SignalStatus.PENDING, index=True)
     notes: str = Field(default="")

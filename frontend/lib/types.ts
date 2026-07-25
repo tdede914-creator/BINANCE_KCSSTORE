@@ -12,6 +12,8 @@ export type SignalStatus =
   | "CANCELLED"
   | "EXPIRED";
 
+export type TrailingMode = "off" | "atr" | "percent";
+
 export interface Config {
   trading_mode: TradingMode;
   scanner_enabled: boolean;
@@ -35,6 +37,11 @@ export interface Config {
   atr_sl_mult: number;
   rr_tp1: number;
   rr_tp2: number;
+  // Trailing stop
+  trailing_mode: TrailingMode;
+  trailing_activation_rr: number;
+  trailing_atr_mult: number;
+  trailing_percent: number;
   paper_balance: number;
 }
 
@@ -85,6 +92,11 @@ export interface Trade {
   tp2_order_id: string | null;
   status: SignalStatus;
   notes: string;
+  // Trailing state (optional; may be absent on older records)
+  trailing_mode?: TrailingMode;
+  trailing_active?: boolean;
+  highest_price?: number | null;
+  lowest_price?: number | null;
 }
 
 export interface Stats {

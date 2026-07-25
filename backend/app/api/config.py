@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import SessionDep, get_or_create_config
 from app.binance.rest import VALID_TIMEFRAMES, BinanceREST
 from app.core.security import decrypt_secret, encrypt_secret, mask_key
-from app.db.models import TradingMode, UserConfig
+from app.db.models import TradingMode, TrailingMode, UserConfig
 
 router = APIRouter()
 
@@ -48,6 +48,12 @@ class ConfigOut(BaseModel):
     rr_tp1: float
     rr_tp2: float
 
+    # Trailing stop
+    trailing_mode: TrailingMode
+    trailing_activation_rr: float
+    trailing_atr_mult: float
+    trailing_percent: float
+
     paper_balance: float
 
 
@@ -72,6 +78,13 @@ class ConfigUpdate(BaseModel):
     atr_sl_mult: float | None = None
     rr_tp1: float | None = None
     rr_tp2: float | None = None
+
+    # Trailing stop
+    trailing_mode: TrailingMode | None = None
+    trailing_activation_rr: float | None = Field(default=None, ge=0.0, le=20.0)
+    trailing_atr_mult: float | None = Field(default=None, ge=0.1, le=10.0)
+    trailing_percent: float | None = Field(default=None, ge=0.05, le=20.0)
+
     paper_balance: float | None = None
 
 
@@ -109,6 +122,10 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
         atr_sl_mult=cfg.atr_sl_mult,
         rr_tp1=cfg.rr_tp1,
         rr_tp2=cfg.rr_tp2,
+        trailing_mode=cfg.trailing_mode,
+        trailing_activation_rr=cfg.trailing_activation_rr,
+        trailing_atr_mult=cfg.trailing_atr_mult,
+        trailing_percent=cfg.trailing_percent,
         paper_balance=cfg.paper_balance,
     )
 
