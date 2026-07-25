@@ -26,9 +26,10 @@ websockets==13.1
 httpx==0.28.1
 
 # --- TA / math ---
+# We implement indicators from scratch in app/strategy/indicators.py, so
+# pandas-ta is intentionally NOT included (would pin us to old numpy anyway).
 pandas==2.2.3
-numpy==2.2.1
-pandas-ta==0.3.14b0
+numpy==1.26.4
 
 # --- Logging ---
 structlog==24.4.0
