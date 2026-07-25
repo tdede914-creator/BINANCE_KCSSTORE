@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
+from sqlalchemy import DateTime
 from sqlmodel import JSON, Column, Field, SQLModel
 
 
@@ -56,6 +57,28 @@ class TrailingMode(str, Enum):
 
 def _utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _dt_column(
+    *,
+    index: bool = False,
+    nullable: bool = False,
+    onupdate: bool = False,
+) -> Column:
+    """Return a timezone-aware TIMESTAMP column definition.
+
+    Using ``DateTime(timezone=True)`` makes Postgres store ``TIMESTAMPTZ``,
+    which is required because our Python code produces tz-aware datetimes
+    (``datetime.now(tz=timezone.utc)``). Without ``timezone=True`` asyncpg
+    rejects the insert with:
+        'can't subtract offset-naive and offset-aware datetimes'.
+    SQLite silently accepts both, which is why dev ran fine but Postgres
+    prod did not.
+    """
+    kwargs: dict = {"nullable": nullable, "index": index}
+    if onupdate:
+        kwargs["onupdate"] = _utc_now
+    return Column(DateTime(timezone=True), **kwargs)
 
 
 class UserConfig(SQLModel, table=True):
@@ -116,7 +139,7 @@ class UserConfig(SQLModel, table=True):
 
     updated_at: datetime = Field(
         default_factory=_utc_now,
-        sa_column_kwargs={"onupdate": _utc_now},
+        sa_column=_dt_column(onupdate=True),
     )
 
 
@@ -126,7 +149,10 @@ class Signal(SQLModel, table=True):
     __tablename__ = "signals"
 
     id: int | None = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=_utc_now, index=True)
+    created_at: datetime = Field(
+        default_factory=_utc_now,
+        sa_column=_dt_column(index=True),
+    )
 
     symbol: str = Field(index=True)
     side: SignalSide
@@ -166,8 +192,14 @@ class Trade(SQLModel, table=True):
     __tablename__ = "trades"
 
     id: int | None = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=_utc_now, index=True)
-    closed_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(
+        default_factory=_utc_now,
+        sa_column=_dt_column(index=True),
+    )
+    closed_at: datetime | None = Field(
+        default=None,
+        sa_column=_dt_column(nullable=True),
+    )
 
     signal_id: Optional[int] = Field(default=None, foreign_key="signals.id", index=True)
 
