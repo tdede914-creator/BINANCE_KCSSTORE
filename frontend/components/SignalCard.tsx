@@ -2,7 +2,13 @@ import clsx from "clsx";
 import type { Signal } from "@/lib/types";
 import { classFor, formatDate, formatPrice, formatUsdt } from "@/lib/format";
 
-export function SignalCard({ signal }: { signal: Signal }) {
+export function SignalCard({
+  signal,
+  onSymbolClick,
+}: {
+  signal: Signal;
+  onSymbolClick?: (symbol: string) => void;
+}) {
   const long = signal.side === "LONG";
   return (
     <div className="bg-bg-card border border-border rounded-lg overflow-hidden">
@@ -16,7 +22,17 @@ export function SignalCard({ signal }: { signal: Signal }) {
           <span className={clsx("font-semibold text-lg", classFor(signal.side))}>
             {signal.side}
           </span>
-          <span className="font-mono">{signal.symbol}</span>
+          {onSymbolClick ? (
+            <button
+              onClick={() => onSymbolClick(signal.symbol)}
+              className="font-mono hover:underline"
+              title="Show on chart"
+            >
+              {signal.symbol}
+            </button>
+          ) : (
+            <span className="font-mono">{signal.symbol}</span>
+          )}
           <span className="text-xs text-muted px-2 py-0.5 rounded bg-bg-soft">
             {signal.entry_tf}
           </span>

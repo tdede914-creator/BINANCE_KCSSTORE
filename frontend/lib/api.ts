@@ -1,5 +1,20 @@
 import type { Config, Signal, Stats, Trade, TradingMode } from "./types";
 
+export interface Candle {
+  time: number; // unix seconds
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface KlinesResponse {
+  symbol: string;
+  interval: string;
+  candles: Candle[];
+}
+
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -80,6 +95,18 @@ export const api = {
   },
   closeTrade: (id: number) =>
     request<Trade>(`/api/trades/${id}/close`, { method: "POST" }),
+
+  // ----- Market data -----
+  getKlines: (params: { symbol: string; interval?: string; limit?: number }) => {
+    const qs = new URLSearchParams({ symbol: params.symbol });
+    if (params.interval) qs.set("interval", params.interval);
+    if (params.limit) qs.set("limit", String(params.limit));
+    return request<KlinesResponse>(`/api/market/klines?${qs.toString()}`);
+  },
+  getTicker: (symbol: string) =>
+    request<{ symbol: string; price: number }>(
+      `/api/market/ticker?symbol=${encodeURIComponent(symbol)}`,
+    ),
 };
 
 export { API_URL };

@@ -8,9 +8,11 @@ import { classFor, formatDate, formatPrice, formatUsdt, pnlClass } from "@/lib/f
 export function TradeRow({
   trade,
   onChanged,
+  onSymbolClick,
 }: {
   trade: Trade;
   onChanged?: () => void;
+  onSymbolClick?: (symbol: string) => void;
 }) {
   const [closing, setClosing] = useState(false);
   const open = trade.status === "OPEN" || trade.status === "TP1_HIT";
@@ -34,7 +36,17 @@ export function TradeRow({
         {formatDate(trade.created_at)}
       </td>
       <td className="py-2 px-3">
-        <span className="font-mono">{trade.symbol}</span>
+        {onSymbolClick ? (
+          <button
+            onClick={() => onSymbolClick(trade.symbol)}
+            className="font-mono hover:underline"
+            title="Show on chart"
+          >
+            {trade.symbol}
+          </button>
+        ) : (
+          <span className="font-mono">{trade.symbol}</span>
+        )}
       </td>
       <td className={clsx("py-2 px-3 font-semibold", classFor(trade.side))}>
         {trade.side}

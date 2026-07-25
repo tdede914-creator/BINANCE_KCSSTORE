@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import { useEventStream } from "@/lib/ws";
@@ -9,6 +10,21 @@ import { SignalCard } from "@/components/SignalCard";
 import { TradeRow } from "@/components/TradeRow";
 import { formatUsdt } from "@/lib/format";
 
+// lightweight-charts touches window/ResizeObserver — load it browser-only.
+const PriceChart = dynamic(
+  () => import("@/components/PriceChart").then((m) => m.PriceChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="bg-bg-soft rounded-lg h-[460px] flex items-center justify-center text-muted text-sm">
+        Loading chart…
+      </div>
+    ),
+  },
+);
+
+const CHART_TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
+
 export default function DashboardPage() {
   const [cfg, setCfg] = useState<Config | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -16,6 +32,18 @@ export default function DashboardPage() {
   const [openTrades, setOpenTrades] = useState<Trade[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Chart local UI state — persisted to localStorage so the user's last
+  // chart context survives a page reload.
+  const [chartSymbol, setChartSymbol] = useState<string | null>(null);
+  const [chartTf, setChartTf] = useState<string | null>(null);
+
+  useEffect(() => {
+    const s = localStorage.getItem("kcs.chart.symbol");
+    const tf = localStorage.getItem("kcs.chart.tf");
+    if (s) setChartSymbol(s);
+    if (tf) setChartTf(tf);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -30,6 +58,10 @@ export default function DashboardPage() {
       setSignals(sig);
       setOpenTrades(trades);
       setErr(null);
+
+      // Default chart selection once config is loaded.
+      setChartSymbol((cur) => cur ?? c.watchlist[0] ?? "BTCUSDT");
+      setChartTf((cur) => cur ?? c.entry_tf);
     } catch (e) {
       setErr(String(e));
     }
@@ -46,6 +78,15 @@ export default function DashboardPage() {
       refresh();
     }
   });
+
+  const handleSymbolChange = (s: string) => {
+    setChartSymbol(s);
+    localStorage.setItem("kcs.chart.symbol", s);
+  };
+  const handleTfChange = (tf: string) => {
+    setChartTf(tf);
+    localStorage.setItem("kcs.chart.tf", tf);
+  };
 
   const toggleScanner = async () => {
     if (!cfg) return;
@@ -84,6 +125,21 @@ export default function DashboardPage() {
       setBusy(false);
     }
   };
+
+  // Trades filtered by the chart symbol so PriceChart only draws relevant lines
+  // (PriceChart also filters internally, but this saves prop churn).
+  const openTradesForSymbol = useMemo(
+    () => openTrades.filter((t) => t.symbol === chartSymbol),
+    [openTrades, chartSymbol],
+  );
+
+  // Watchlist + any open-trade symbols not already in it → chart selector options.
+  const chartSymbols = useMemo(() => {
+    const set = new Set<string>(cfg?.watchlist ?? []);
+    for (const t of openTrades) set.add(t.symbol);
+    if (chartSymbol) set.add(chartSymbol);
+    return Array.from(set);
+  }, [cfg, openTrades, chartSymbol]);
 
   if (err && !cfg) {
     return (
@@ -154,6 +210,78 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* Chart */}
+      <section className="bg-bg-card border border-border rounded-lg p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold">Chart</h2>
+            {chartSymbol && chartTf && (
+              <span className="text-xs text-muted font-mono">
+                {chartSymbol} · {chartTf}
+                {openTradesForSymbol.length > 0 && (
+                  <> · {openTradesForSymbol.length} open</>
+                )}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={chartSymbol ?? ""}
+              onChange={(e) => handleSymbolChange(e.target.value)}
+              className="bg-bg-soft border border-border rounded px-3 py-1.5 text-sm font-mono min-w-[130px]"
+            >
+              {chartSymbols.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-1 flex-wrap">
+              {CHART_TIMEFRAMES.map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => handleTfChange(tf)}
+                  className={clsx(
+                    "px-2.5 py-1 rounded text-xs font-mono",
+                    chartTf === tf
+                      ? "bg-bg-soft text-white border border-border"
+                      : "text-muted hover:text-white",
+                  )}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {cfg && chartSymbol && chartTf ? (
+          <PriceChart
+            symbol={chartSymbol}
+            interval={chartTf}
+            emaFast={cfg.ema_fast}
+            emaSlow={cfg.ema_slow}
+            emaTrigger={cfg.ema_trigger}
+            openTrades={openTradesForSymbol}
+            testnet={cfg.binance_testnet}
+            height={480}
+          />
+        ) : (
+          <div className="h-[480px] bg-bg-soft rounded flex items-center justify-center text-muted text-sm">
+            Loading chart…
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+          <LegendDot color="#f1c40f" label={`EMA ${cfg?.ema_fast ?? ""}`} />
+          <LegendDot color="#9b59b6" label={`EMA ${cfg?.ema_slow ?? ""}`} />
+          <LegendDot color="#3498db" label={`EMA ${cfg?.ema_trigger ?? ""}`} />
+          <LegendDot color="#8892b0" label="Entry (dashed)" />
+          <LegendDot color="#e74c3c" label="SL" />
+          <LegendDot color="#2ecc71" label="TP1/TP2" />
+        </div>
+      </section>
+
       {/* Live signals */}
       <section>
         <h2 className="text-lg font-semibold mb-3">Recent signals</h2>
@@ -164,7 +292,11 @@ export default function DashboardPage() {
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {signals.map((s) => (
-              <SignalCard key={s.id} signal={s} />
+              <SignalCard
+                key={s.id}
+                signal={s}
+                onSymbolClick={handleSymbolChange}
+              />
             ))}
           </div>
         )}
@@ -197,7 +329,12 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {openTrades.map((t) => (
-                  <TradeRow key={t.id} trade={t} onChanged={refresh} />
+                  <TradeRow
+                    key={t.id}
+                    trade={t}
+                    onChanged={refresh}
+                    onSymbolClick={handleSymbolChange}
+                  />
                 ))}
               </tbody>
             </table>
@@ -205,5 +342,17 @@ export default function DashboardPage() {
         )}
       </section>
     </div>
+  );
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+      {label}
+    </span>
   );
 }

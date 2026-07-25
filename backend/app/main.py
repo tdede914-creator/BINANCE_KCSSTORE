@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import auth, config as config_router, signals, trades, ws
+from app.api import auth, config as config_router, market, signals, trades, ws
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.db.database import init_db
@@ -65,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(config_router.router, prefix="/api/config", tags=["config"])
     app.include_router(signals.router, prefix="/api/signals", tags=["signals"])
     app.include_router(trades.router, prefix="/api/trades", tags=["trades"])
+    app.include_router(market.router, prefix="/api/market", tags=["market"])
     app.include_router(ws.router, prefix="/ws", tags=["ws"])
 
     @app.get("/", tags=["root"])
