@@ -40,14 +40,18 @@ export default function DashboardPage() {
   const [chartTf, setChartTf] = useState<string | null>(null);
   const [showChannel, setShowChannel] = useState(false);
   const [channelInfo, setChannelInfo] = useState<ChannelInfo | null>(null);
+  const [showSR, setShowSR] = useState(false);
+  const [srCount, setSrCount] = useState<number | null>(null);
 
   useEffect(() => {
     const s = localStorage.getItem("kcs.chart.symbol");
     const tf = localStorage.getItem("kcs.chart.tf");
     const ch = localStorage.getItem("kcs.chart.showChannel");
+    const sr = localStorage.getItem("kcs.chart.showSR");
     if (s) setChartSymbol(s);
     if (tf) setChartTf(tf);
     if (ch === "1") setShowChannel(true);
+    if (sr === "1") setShowSR(true);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -100,10 +104,21 @@ export default function DashboardPage() {
       return next;
     });
   };
+  const toggleSR = () => {
+    setShowSR((cur) => {
+      const next = !cur;
+      localStorage.setItem("kcs.chart.showSR", next ? "1" : "0");
+      if (!next) setSrCount(null);
+      return next;
+    });
+  };
 
-  // Stable callback so PriceChart doesn't refetch on every dashboard tick.
+  // Stable callbacks so PriceChart doesn't refetch on every dashboard tick.
   const handleChannelInfo = useCallback((info: ChannelInfo | null) => {
     setChannelInfo(info);
+  }, []);
+  const handleSRInfo = useCallback((n: number | null) => {
+    setSrCount(n);
   }, []);
 
   const toggleScanner = async () => {
@@ -244,6 +259,14 @@ export default function DashboardPage() {
             {showChannel && channelInfo && (
               <ChannelBadge info={channelInfo} />
             )}
+            {showSR && srCount !== null && (
+              <span
+                className="text-xs font-mono px-2 py-0.5 rounded border bg-bg-soft text-muted border-border"
+                title="Auto-detected S/R levels from swing clusters"
+              >
+                S/R × {srCount}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -285,6 +308,18 @@ export default function DashboardPage() {
             >
               Channel
             </button>
+            <button
+              onClick={toggleSR}
+              className={clsx(
+                "px-2.5 py-1 rounded text-xs font-mono border",
+                showSR
+                  ? "bg-yellow-500/20 text-yellow-300 border-yellow-400/40"
+                  : "text-muted hover:text-white border-border",
+              )}
+              title="Auto-detect and draw horizontal Support/Resistance levels"
+            >
+              S/R
+            </button>
           </div>
         </div>
 
@@ -300,6 +335,8 @@ export default function DashboardPage() {
             height={480}
             showChannel={showChannel}
             onChannelInfo={handleChannelInfo}
+            showSR={showSR}
+            onSRInfo={handleSRInfo}
           />
         ) : (
           <div className="h-[480px] bg-bg-soft rounded flex items-center justify-center text-muted text-sm">
@@ -316,6 +353,12 @@ export default function DashboardPage() {
           <LegendDot color="#2ecc71" label="TP1/TP2" />
           {showChannel && (
             <LegendDot color="#14b8a6" label="Regression channel" />
+          )}
+          {showSR && (
+            <>
+              <LegendDot color="#2ecc71" label="Support" />
+              <LegendDot color="#e74c3c" label="Resistance" />
+            </>
           )}
         </div>
       </section>

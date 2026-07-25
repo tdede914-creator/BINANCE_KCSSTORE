@@ -38,6 +38,20 @@ export interface ChannelResponse {
   width_pct: number;
 }
 
+export interface SRLevel {
+  price: number;
+  kind: "support" | "resistance";
+  touches: number;
+  last_touch_time: number; // unix seconds
+}
+
+export interface SRResponse {
+  symbol: string;
+  interval: string;
+  lookback: number;
+  levels: SRLevel[];
+}
+
 /**
  * Resolve the backend URL.
  *
@@ -157,6 +171,22 @@ export const api = {
     });
     if (params.lookback) qs.set("lookback", String(params.lookback));
     return request<ChannelResponse>(`/api/market/channel?${qs.toString()}`);
+  },
+  getSR: (params: {
+    symbol: string;
+    interval: string;
+    lookback?: number;
+    maxLevels?: number;
+    minTouches?: number;
+  }) => {
+    const qs = new URLSearchParams({
+      symbol: params.symbol,
+      interval: params.interval,
+    });
+    if (params.lookback) qs.set("lookback", String(params.lookback));
+    if (params.maxLevels) qs.set("max_levels", String(params.maxLevels));
+    if (params.minTouches) qs.set("min_touches", String(params.minTouches));
+    return request<SRResponse>(`/api/market/sr?${qs.toString()}`);
   },
 };
 

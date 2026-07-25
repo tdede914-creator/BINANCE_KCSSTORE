@@ -44,6 +44,12 @@ export interface PriceChartProps {
   channelLookback?: number;
   /** Callback with slope% / width% for the parent to show a badge. */
   onChannelInfo?: (info: ChannelInfo | null) => void;
+  /** When true, fetch and draw the top-N Support/Resistance levels. */
+  showSR?: boolean;
+  /** How many levels to draw when showSR=true. Default 8. */
+  srMaxLevels?: number;
+  /** Callback with the number of drawn levels so the parent can show a count. */
+  onSRInfo?: (count: number | null) => void;
 }
 
 // --------------------------------------------------------------------------
@@ -71,6 +77,9 @@ export function PriceChart({
   showChannel = false,
   channelLookback = 100,
   onChannelInfo,
+  showSR = false,
+  srMaxLevels = 8,
+  onSRInfo,
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -89,6 +98,12 @@ export function PriceChart({
   // in the effect's deps (avoids re-fetching when the parent re-renders).
   const onChannelInfoRef = useRef(onChannelInfo);
   onChannelInfoRef.current = onChannelInfo;
+
+  // Separate ref for S/R lines so we don't accidentally wipe the trade-level
+  // lines (priceLinesRef) when toggling S/R off.
+  const srPriceLinesRef = useRef<IPriceLine[]>([]);
+  const onSRInfoRef = useRef(onSRInfo);
+  onSRInfoRef.current = onSRInfo;
 
   // Live-updated EMA state (mutable so we don't recompute the whole array per tick).
   const lastEmaFast = useRef<number | null>(null);
@@ -176,6 +191,7 @@ export function PriceChart({
       channelMidRef.current = null;
       channelLowerRef.current = null;
       priceLinesRef.current = [];
+      srPriceLinesRef.current = [];
     };
     // We intentionally only build the chart once; EMA period changes flow into
     // the reload effect below.
@@ -451,6 +467,74 @@ export function PriceChart({
       cancelled = true;
     };
   }, [showChannel, symbol, interval, channelLookback]);
+
+  // ---- 5. Auto Support/Resistance horizontal levels --------------------
+  useEffect(() => {
+    const series = candleSeriesRef.current;
+    if (!series) return;
+
+    // Helper — remove all S/R price lines (never touches trade-level lines).
+    const clearSR = () => {
+      for (const pl of srPriceLinesRef.current) {
+        try {
+          series.removePriceLine(pl);
+        } catch {
+          /* already removed */
+        }
+      }
+      srPriceLinesRef.current = [];
+      onSRInfoRef.current?.(null);
+    };
+
+    if (!showSR) {
+      clearSR();
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const resp = await api.getSR({
+          symbol,
+          interval,
+          maxLevels: srMaxLevels,
+        });
+        if (cancelled || !candleSeriesRef.current) return;
+
+        // Wipe any stale lines from a previous render before drawing fresh
+        // ones (e.g. symbol changed while showSR was still true).
+        clearSR();
+
+        for (const lvl of resp.levels) {
+          const isSupport = lvl.kind === "support";
+          const color = isSupport ? "#2ecc71" : "#e74c3c";
+          // Emphasize levels with more touches: thicker line + solid style.
+          const strong = lvl.touches >= 3;
+          const width = Math.min(Math.max(lvl.touches - 1, 1), 3) as 1 | 2 | 3;
+          srPriceLinesRef.current.push(
+            candleSeriesRef.current.createPriceLine({
+              price: lvl.price,
+              color,
+              lineWidth: width,
+              lineStyle: strong ? LineStyle.Solid : LineStyle.Dotted,
+              axisLabelVisible: true,
+              title: `${isSupport ? "S" : "R"}×${lvl.touches}`,
+            }),
+          );
+        }
+
+        onSRInfoRef.current?.(resp.levels.length);
+      } catch (e) {
+        console.error("chart.load_sr_failed", e);
+        onSRInfoRef.current?.(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showSR, symbol, interval, srMaxLevels]);
 
   return (
     <div

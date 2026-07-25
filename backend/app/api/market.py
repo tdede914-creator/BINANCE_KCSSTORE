@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.binance.rest import VALID_TIMEFRAMES, BinanceREST
 from app.strategy.channel import compute_regression_channel
+from app.strategy.indicators import find_swings, sr_zones
 
 router = APIRouter()
 
@@ -151,4 +152,89 @@ async def get_channel(
         slope_pct_total=result.slope_pct_total,
         stddev=result.stddev,
         width_pct=result.width_pct,
+    )
+
+
+
+# --------------------------------------------------------------------------
+# Support / Resistance levels
+# --------------------------------------------------------------------------
+
+
+class SRLevelDTO(BaseModel):
+    price: float
+    kind: str                # "support" | "resistance"
+    touches: int             # how many swings clustered at this price
+    last_touch_time: int     # unix seconds
+
+
+class SRResponse(BaseModel):
+    symbol: str
+    interval: str
+    lookback: int
+    levels: list[SRLevelDTO]
+
+
+@router.get("/sr", response_model=SRResponse)
+async def get_sr(
+    symbol: str = Query(..., min_length=3, max_length=20),
+    interval: str = Query("1h"),
+    lookback: int = Query(300, ge=50, le=1000),
+    max_levels: int = Query(10, ge=1, le=30),
+    min_touches: int = Query(2, ge=2, le=10),
+    cluster_pct: float = Query(0.003, ge=0.0005, le=0.02),
+) -> SRResponse:
+    """Return the most relevant horizontal S/R levels for a symbol.
+
+    Uses the same detector the strategy engine uses (fractal swings +
+    proximity clustering). Levels are ranked by number of touches, and
+    the ``max_levels`` most-relevant zones are returned, capping the
+    number of horizontal lines drawn on the chart.
+    """
+    if interval not in VALID_TIMEFRAMES:
+        raise HTTPException(
+            400,
+            f"invalid interval; valid: {', '.join(VALID_TIMEFRAMES)}",
+        )
+    sym = symbol.upper()
+
+    async with BinanceREST() as rest:
+        try:
+            df = await rest.get_klines(sym, interval, limit=lookback)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"binance error: {e}") from e
+
+    if len(df) < 20:
+        return SRResponse(symbol=sym, interval=interval, lookback=len(df), levels=[])
+
+    swings = find_swings(df, left=3, right=3)
+    zones = sr_zones(
+        df,
+        swings,
+        cluster_pct=cluster_pct,
+        min_touches=min_touches,
+    )
+
+    # Rank: more touches first, tie-break by most recent last_touch_index.
+    zones.sort(key=lambda z: (-z.touches, -z.last_touch_index))
+    zones = zones[:max_levels]
+
+    levels: list[SRLevelDTO] = []
+    for z in zones:
+        # Guard against index just outside df (e.g. if strategy grew it).
+        idx = min(max(z.last_touch_index, 0), len(df) - 1)
+        levels.append(
+            SRLevelDTO(
+                price=float(z.price),
+                kind=z.kind,
+                touches=int(z.touches),
+                last_touch_time=int(df.index[idx].timestamp()),
+            )
+        )
+
+    return SRResponse(
+        symbol=sym,
+        interval=interval,
+        lookback=len(df),
+        levels=levels,
     )
