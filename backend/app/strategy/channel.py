@@ -85,6 +85,13 @@ def compute_regression_channel(
     max_up = float(residuals.max())          # >= 0
     max_down = float(residuals.min())        # <= 0
 
+    # Use the LARGER of the two extremes as the offset for both sides,
+    # so the midline is exactly centered between upper and lower. This
+    # matches user intuition ("garis tengah persis di tengah") — the
+    # asymmetric variant was more academically correct but visually
+    # confusing.
+    max_dev = max(abs(max_up), abs(max_down))
+
     start_i = 0
     end_i = n - 1
     start_time = int(recent.index[start_i].timestamp())
@@ -96,9 +103,9 @@ def compute_regression_channel(
             end=ChannelPoint(time=end_time, price=float(fit[end_i] + offset)),
         )
 
-    upper = _line(max_up)
+    upper = _line(+max_dev)
     midline = _line(0.0)
-    lower = _line(max_down)
+    lower = _line(-max_dev)
 
     slope_pct_total = float(((fit[-1] - fit[0]) / fit[0]) * 100.0) if fit[0] else 0.0
     width_pct = (

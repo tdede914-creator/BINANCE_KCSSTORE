@@ -50,6 +50,8 @@ export interface PriceChartProps {
   srMaxLevels?: number;
   /** Callback with the number of drawn levels so the parent can show a count. */
   onSRInfo?: (count: number | null) => void;
+  /** Extra higher-TF intervals to overlay as auto channels (upper/lower only). */
+  mtfIntervals?: string[];
 }
 
 // --------------------------------------------------------------------------
@@ -60,6 +62,11 @@ export interface PriceChartProps {
 
 const WS_MAINNET = "wss://fstream.binance.com/ws";
 const WS_TESTNET = "wss://stream.binancefuture.com/ws";
+
+// Distinct colors used by the MTF overlay, ordered from nearest-higher to
+// highest timeframe. Chosen so they don't clash with EMAs (yellow/purple/blue)
+// or the primary channel (teal).
+const MTF_COLORS = ["#ff9800", "#06b6d4", "#ec4899"];
 
 // --------------------------------------------------------------------------
 // Component
@@ -80,6 +87,7 @@ export function PriceChart({
   showSR = false,
   srMaxLevels = 8,
   onSRInfo,
+  mtfIntervals,
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -104,6 +112,13 @@ export function PriceChart({
   const srPriceLinesRef = useRef<IPriceLine[]>([]);
   const onSRInfoRef = useRef(onSRInfo);
   onSRInfoRef.current = onSRInfo;
+
+  // Multi-Timeframe channel line series. One entry per requested higher TF,
+  // each with an upper + lower line drawn as a thin dotted line so it
+  // stays visually distinct from the primary channel.
+  const mtfSeriesRef = useRef<
+    Array<{ interval: string; upper: ISeriesApi<"Line">; lower: ISeriesApi<"Line"> }>
+  >([]);
 
   // Live-updated EMA state (mutable so we don't recompute the whole array per tick).
   const lastEmaFast = useRef<number | null>(null);
@@ -192,6 +207,7 @@ export function PriceChart({
       channelLowerRef.current = null;
       priceLinesRef.current = [];
       srPriceLinesRef.current = [];
+      mtfSeriesRef.current = [];
     };
     // We intentionally only build the chart once; EMA period changes flow into
     // the reload effect below.
@@ -509,15 +525,17 @@ export function PriceChart({
         for (const lvl of resp.levels) {
           const isSupport = lvl.kind === "support";
           const color = isSupport ? "#2ecc71" : "#e74c3c";
-          // Emphasize levels with more touches: thicker line + solid style.
+          // All S/R lines share a thin, unobtrusive style — same weight as
+          // the channel midline. Level strength is communicated via the
+          // "×N" label instead of line thickness, so the chart stays clean
+          // even with 10 levels drawn at once.
           const strong = lvl.touches >= 3;
-          const width = Math.min(Math.max(lvl.touches - 1, 1), 3) as 1 | 2 | 3;
           srPriceLinesRef.current.push(
             candleSeriesRef.current.createPriceLine({
               price: lvl.price,
               color,
-              lineWidth: width,
-              lineStyle: strong ? LineStyle.Solid : LineStyle.Dotted,
+              lineWidth: 1,
+              lineStyle: strong ? LineStyle.Dashed : LineStyle.Dotted,
               axisLabelVisible: true,
               title: `${isSupport ? "S" : "R"}×${lvl.touches}`,
             }),
@@ -535,6 +553,88 @@ export function PriceChart({
       cancelled = true;
     };
   }, [showSR, symbol, interval, srMaxLevels]);
+
+  // ---- 6. Multi-Timeframe channel overlays -----------------------------
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const clearMTF = () => {
+      for (const entry of mtfSeriesRef.current) {
+        try {
+          chart.removeSeries(entry.upper);
+        } catch {
+          /* already removed */
+        }
+        try {
+          chart.removeSeries(entry.lower);
+        } catch {
+          /* already removed */
+        }
+      }
+      mtfSeriesRef.current = [];
+    };
+
+    const intervals = mtfIntervals ?? [];
+    if (intervals.length === 0) {
+      clearMTF();
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const results = await Promise.allSettled(
+        intervals.map((iv) => api.getChannel({ symbol, interval: iv, lookback: 100 })),
+      );
+      if (cancelled || !chartRef.current) return;
+
+      // Wipe any prior MTF lines before drawing fresh ones (e.g. symbol
+      // changed while MTF was on, or user switched the base timeframe).
+      clearMTF();
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (r.status !== "fulfilled") continue;
+        const iv = intervals[i];
+        const color = MTF_COLORS[i % MTF_COLORS.length];
+
+        const upper = chart.addLineSeries({
+          color,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dotted,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          title: `MTF ${iv} ↑`,
+        });
+        const lower = chart.addLineSeries({
+          color,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dotted,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          title: `MTF ${iv} ↓`,
+        });
+
+        upper.setData([
+          { time: r.value.upper.start.time as UTCTimestamp, value: r.value.upper.start.price },
+          { time: r.value.upper.end.time as UTCTimestamp, value: r.value.upper.end.price },
+        ]);
+        lower.setData([
+          { time: r.value.lower.start.time as UTCTimestamp, value: r.value.lower.start.price },
+          { time: r.value.lower.end.time as UTCTimestamp, value: r.value.lower.end.price },
+        ]);
+
+        mtfSeriesRef.current.push({ interval: iv, upper, lower });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // We stringify intervals so the effect only reruns when the *contents*
+    // change, not when the array identity does. Simpler than a custom compare.
+  }, [symbol, (mtfIntervals ?? []).join(",")]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div

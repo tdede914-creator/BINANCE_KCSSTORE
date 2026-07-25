@@ -42,16 +42,19 @@ export default function DashboardPage() {
   const [channelInfo, setChannelInfo] = useState<ChannelInfo | null>(null);
   const [showSR, setShowSR] = useState(false);
   const [srCount, setSrCount] = useState<number | null>(null);
+  const [showMTF, setShowMTF] = useState(false);
 
   useEffect(() => {
     const s = localStorage.getItem("kcs.chart.symbol");
     const tf = localStorage.getItem("kcs.chart.tf");
     const ch = localStorage.getItem("kcs.chart.showChannel");
     const sr = localStorage.getItem("kcs.chart.showSR");
+    const mtf = localStorage.getItem("kcs.chart.showMTF");
     if (s) setChartSymbol(s);
     if (tf) setChartTf(tf);
     if (ch === "1") setShowChannel(true);
     if (sr === "1") setShowSR(true);
+    if (mtf === "1") setShowMTF(true);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -112,6 +115,13 @@ export default function DashboardPage() {
       return next;
     });
   };
+  const toggleMTF = () => {
+    setShowMTF((cur) => {
+      const next = !cur;
+      localStorage.setItem("kcs.chart.showMTF", next ? "1" : "0");
+      return next;
+    });
+  };
 
   // Stable callbacks so PriceChart doesn't refetch on every dashboard tick.
   const handleChannelInfo = useCallback((info: ChannelInfo | null) => {
@@ -164,6 +174,13 @@ export default function DashboardPage() {
   const openTradesForSymbol = useMemo(
     () => openTrades.filter((t) => t.symbol === chartSymbol),
     [openTrades, chartSymbol],
+  );
+
+  // Higher timeframes to overlay when MTF toggle is on. Picked so the user
+  // sees a "zoom out" of trend context on their current view.
+  const mtfIntervals = useMemo(
+    () => (showMTF && chartTf ? higherTimeframes(chartTf) : []),
+    [showMTF, chartTf],
   );
 
   // Watchlist + any open-trade symbols not already in it → chart selector options.
@@ -267,6 +284,14 @@ export default function DashboardPage() {
                 S/R × {srCount}
               </span>
             )}
+            {showMTF && mtfIntervals.length > 0 && (
+              <span
+                className="text-xs font-mono px-2 py-0.5 rounded border bg-pink-500/10 text-pink-300 border-pink-400/40"
+                title="Higher-timeframe channels overlaid on the current chart"
+              >
+                MTF: {mtfIntervals.join(" · ")}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -320,6 +345,18 @@ export default function DashboardPage() {
             >
               S/R
             </button>
+            <button
+              onClick={toggleMTF}
+              className={clsx(
+                "px-2.5 py-1 rounded text-xs font-mono border",
+                showMTF
+                  ? "bg-pink-500/20 text-pink-300 border-pink-400/40"
+                  : "text-muted hover:text-white border-border",
+              )}
+              title="Overlay parallel channels from higher timeframes"
+            >
+              MTF
+            </button>
           </div>
         </div>
 
@@ -337,6 +374,7 @@ export default function DashboardPage() {
             onChannelInfo={handleChannelInfo}
             showSR={showSR}
             onSRInfo={handleSRInfo}
+            mtfIntervals={mtfIntervals}
           />
         ) : (
           <div className="h-[480px] bg-bg-soft rounded flex items-center justify-center text-muted text-sm">
@@ -360,6 +398,14 @@ export default function DashboardPage() {
               <LegendDot color="#e74c3c" label="Resistance" />
             </>
           )}
+          {showMTF &&
+            mtfIntervals.map((iv, idx) => (
+              <LegendDot
+                key={iv}
+                color={MTF_LEGEND_COLORS[idx % MTF_LEGEND_COLORS.length]}
+                label={`MTF ${iv}`}
+              />
+            ))}
         </div>
       </section>
 
@@ -424,6 +470,29 @@ export default function DashboardPage() {
       </section>
     </div>
   );
+}
+
+const MTF_LEGEND_COLORS = ["#ff9800", "#06b6d4", "#ec4899"];
+
+/**
+ * Given a base timeframe, return up to 3 higher timeframes to overlay.
+ * Keeps the selection sensible (avoids drawing 4h channel on a 1m chart —
+ * that data span would be days off-screen and produce a near-horizontal
+ * line) and consistent across the app.
+ */
+function higherTimeframes(current: string): string[] {
+  const map: Record<string, string[]> = {
+    "1m":  ["15m", "1h", "4h"],
+    "3m":  ["15m", "1h", "4h"],
+    "5m":  ["30m", "1h", "4h"],
+    "15m": ["1h", "4h", "1d"],
+    "30m": ["1h", "4h", "1d"],
+    "1h":  ["4h", "1d"],
+    "2h":  ["4h", "1d"],
+    "4h":  ["1d"],
+    "1d":  [],
+  };
+  return map[current] ?? [];
 }
 
 function LegendDot({ color, label }: { color: string; label: string }) {
