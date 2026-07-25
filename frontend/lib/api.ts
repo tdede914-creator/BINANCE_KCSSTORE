@@ -36,6 +36,7 @@ export interface ChannelResponse {
   slope_pct_total: number;
   stddev: number;
   width_pct: number;
+  algorithm: "pivot" | "regression";
 }
 
 export interface SRLevel {

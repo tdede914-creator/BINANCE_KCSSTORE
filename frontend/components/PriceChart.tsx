@@ -26,6 +26,7 @@ export interface ChannelInfo {
   slope_pct_total: number;
   width_pct: number;
   lookback: number;
+  algorithm: "pivot" | "regression";
 }
 
 export interface PriceChartProps {
@@ -472,6 +473,7 @@ export function PriceChart({
           slope_pct_total: resp.slope_pct_total,
           width_pct: resp.width_pct,
           lookback: resp.lookback,
+          algorithm: resp.algorithm,
         });
       } catch (e) {
         console.error("chart.load_channel_failed", e);

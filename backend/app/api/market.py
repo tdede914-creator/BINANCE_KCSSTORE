@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.binance.rest import VALID_TIMEFRAMES, BinanceREST
-from app.strategy.channel import compute_regression_channel
+from app.strategy.channel import compute_channel
 from app.strategy.indicators import find_swings, sr_zones
 
 router = APIRouter()
@@ -102,6 +102,7 @@ class ChannelResponse(BaseModel):
     slope_pct_total: float
     stddev: float
     width_pct: float
+    algorithm: str  # "pivot" | "regression" — which one produced this result
 
 
 @router.get("/channel", response_model=ChannelResponse)
@@ -109,11 +110,14 @@ async def get_channel(
     symbol: str = Query(..., min_length=3, max_length=20),
     interval: str = Query("1h"),
     lookback: int = Query(100, ge=20, le=500),
+    algorithm: str = Query("pivot", regex="^(pivot|regression)$"),
 ) -> ChannelResponse:
     """Return an auto-computed parallel channel for the given symbol/interval.
 
-    The bands touch the two most extreme candles in the lookback window, so
-    visually it matches the classic manual trendline-and-parallel drawing.
+    ``algorithm='pivot'`` (default) draws the channel through actual swing
+    higher-lows / lower-highs so the edges pass exactly through pivot
+    candles. Falls back to ``regression`` automatically when there are
+    not enough swings in the lookback window.
     """
     if interval not in VALID_TIMEFRAMES:
         raise HTTPException(
@@ -131,7 +135,7 @@ async def get_channel(
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"binance error: {e}") from e
 
-    result = compute_regression_channel(df, lookback=lookback)
+    result = compute_channel(df, lookback=lookback, prefer=algorithm)
     if result is None:
         raise HTTPException(400, "not enough data to compute channel")
 
@@ -152,6 +156,7 @@ async def get_channel(
         slope_pct_total=result.slope_pct_total,
         stddev=result.stddev,
         width_pct=result.width_pct,
+        algorithm=result.algorithm,
     )
 
 

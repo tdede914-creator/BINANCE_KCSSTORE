@@ -510,6 +510,7 @@ function LegendDot({ color, label }: { color: string; label: string }) {
 function ChannelBadge({ info }: { info: ChannelInfo }) {
   const up = info.slope_pct_total >= 0;
   const arrow = up ? "▲" : "▼";
+  const label = info.algorithm === "pivot" ? "pivot" : "regr";
   return (
     <span
       className={clsx(
@@ -518,10 +519,10 @@ function ChannelBadge({ info }: { info: ChannelInfo }) {
           ? "bg-long/10 text-long border-long/40"
           : "bg-short/10 text-short border-short/40",
       )}
-      title={`Regression channel over ${info.lookback} candles`}
+      title={`${info.algorithm} channel over ${info.lookback} candles`}
     >
       {arrow} {info.slope_pct_total >= 0 ? "+" : ""}
-      {info.slope_pct_total.toFixed(2)}% · width {info.width_pct.toFixed(2)}%
+      {info.slope_pct_total.toFixed(2)}% · {label}
     </span>
   );
 }
