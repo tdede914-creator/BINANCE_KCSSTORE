@@ -1,0 +1,94 @@
+"""Signal endpoints — list + acknowledge signals produced by the scanner."""
+from __future__ import annotations
+
+from datetime import datetime
+
+from fastapi import APIRouter, Query
+from pydantic import BaseModel
+from sqlalchemy import desc, select
+
+from app.api.deps import SessionDep
+from app.db.models import Signal, SignalStatus, TradingMode
+
+router = APIRouter()
+
+
+class SignalOut(BaseModel):
+    id: int
+    created_at: datetime
+    symbol: str
+    side: str
+    status: str
+    mode: str
+
+    bias_tf: str
+    setup_tf: str
+    entry_tf: str
+
+    entry_price: float
+    stop_loss: float
+    take_profit_1: float
+    take_profit_2: float
+
+    leverage: int
+    quantity: float
+    risk_amount_usdt: float
+
+    confidence: float
+    reason: str
+    diagnostics: dict = {}
+    trade_id: int | None
+
+
+def _to_out(s: Signal) -> SignalOut:
+    return SignalOut(
+        id=s.id or 0,
+        created_at=s.created_at,
+        symbol=s.symbol,
+        side=s.side.value if hasattr(s.side, "value") else str(s.side),
+        status=s.status.value if hasattr(s.status, "value") else str(s.status),
+        mode=s.mode.value if hasattr(s.mode, "value") else str(s.mode),
+        bias_tf=s.bias_tf,
+        setup_tf=s.setup_tf,
+        entry_tf=s.entry_tf,
+        entry_price=s.entry_price,
+        stop_loss=s.stop_loss,
+        take_profit_1=s.take_profit_1,
+        take_profit_2=s.take_profit_2,
+        leverage=s.leverage,
+        quantity=s.quantity,
+        risk_amount_usdt=s.risk_amount_usdt,
+        confidence=s.confidence,
+        reason=s.reason,
+        diagnostics=s.diagnostics or {},
+        trade_id=s.trade_id,
+    )
+
+
+@router.get("", response_model=list[SignalOut])
+async def list_signals(
+    session: SessionDep,
+    limit: int = Query(50, ge=1, le=500),
+    status: SignalStatus | None = None,
+    mode: TradingMode | None = None,
+    symbol: str | None = None,
+) -> list[SignalOut]:
+    stmt = select(Signal).order_by(desc(Signal.created_at)).limit(limit)
+    if status:
+        stmt = stmt.where(Signal.status == status)
+    if mode:
+        stmt = stmt.where(Signal.mode == mode)
+    if symbol:
+        stmt = stmt.where(Signal.symbol == symbol.upper())
+    rows = (await session.execute(stmt)).scalars().all()
+    return [_to_out(s) for s in rows]
+
+
+@router.get("/{signal_id}", response_model=SignalOut)
+async def get_signal(signal_id: int, session: SessionDep) -> SignalOut:
+    s = await session.get(Signal, signal_id)
+    if s is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(404, "Signal not found")
+    return _to_out(s)

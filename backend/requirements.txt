@@ -1,0 +1,39 @@
+# --- Web framework ---
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-settings==2.7.0
+python-multipart==0.0.19
+
+# --- Database ---
+sqlmodel==0.0.22
+sqlalchemy==2.0.36
+asyncpg==0.30.0
+aiosqlite==0.20.0
+alembic==1.14.0
+
+# --- Cache / pub-sub ---
+redis==5.2.1
+
+# --- Security ---
+cryptography==44.0.0
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# --- Binance ---
+python-binance==1.0.28
+websockets==13.1
+httpx==0.28.1
+
+# --- TA / math ---
+pandas==2.2.3
+numpy==2.2.1
+pandas-ta==0.3.14b0
+
+# --- Logging ---
+structlog==24.4.0
+
+# --- Dev / test (optional) ---
+pytest==8.3.4
+pytest-asyncio==0.25.0
+ruff==0.8.4
