@@ -119,6 +119,15 @@ export const api = {
       { method: "POST" },
     ),
 
+  // ----- TwelveData (Forex) -----
+  saveTwelvedataKey: (api_key: string) =>
+    request<Config>("/api/config/twelvedata-key", {
+      method: "POST",
+      body: JSON.stringify({ api_key }),
+    }),
+  deleteTwelvedataKey: () =>
+    request<Config>("/api/config/twelvedata-key", { method: "DELETE" }),
+
   // ----- Signals -----
   listSignals: (params: { limit?: number; symbol?: string } = {}) => {
     const qs = new URLSearchParams();

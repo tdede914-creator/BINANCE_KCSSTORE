@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import SessionDep, get_or_create_config
 from app.binance.rest import VALID_TIMEFRAMES, BinanceREST
 from app.core.security import decrypt_secret, encrypt_secret, mask_key
-from app.db.models import TradingMode, TrailingMode, UserConfig
+from app.db.models import MarketMode, TradingMode, TrailingMode, UserConfig
 
 router = APIRouter()
 
@@ -22,12 +22,16 @@ router = APIRouter()
 class ConfigOut(BaseModel):
     trading_mode: TradingMode
     scanner_enabled: bool
+    market_mode: MarketMode
 
     binance_api_key_masked: str
     binance_api_configured: bool
     binance_testnet: bool
 
+    twelvedata_configured: bool
+
     watchlist: list[str]
+    forex_watchlist: list[str]
 
     bias_tf: str
     setup_tf: str
@@ -60,8 +64,10 @@ class ConfigOut(BaseModel):
 class ConfigUpdate(BaseModel):
     trading_mode: TradingMode | None = None
     scanner_enabled: bool | None = None
+    market_mode: MarketMode | None = None
     binance_testnet: bool | None = None
     watchlist: list[str] | None = None
+    forex_watchlist: list[str] | None = None
     bias_tf: str | None = None
     setup_tf: str | None = None
     entry_tf: str | None = None
@@ -94,6 +100,10 @@ class BinanceKeyUpdate(BaseModel):
     testnet: bool = True
 
 
+class TwelveDataKeyUpdate(BaseModel):
+    api_key: str = Field(min_length=8)
+
+
 # ---------- Helpers ----------
 
 
@@ -102,10 +112,13 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
     return ConfigOut(
         trading_mode=cfg.trading_mode,
         scanner_enabled=cfg.scanner_enabled,
+        market_mode=cfg.market_mode,
         binance_api_key_masked=mask_key(key),
         binance_api_configured=bool(cfg.binance_api_key_enc),
         binance_testnet=cfg.binance_testnet,
+        twelvedata_configured=bool(cfg.twelvedata_api_key_enc),
         watchlist=[s for s in cfg.watchlist_csv.split(",") if s],
+        forex_watchlist=[s for s in cfg.forex_watchlist_csv.split(",") if s],
         bias_tf=cfg.bias_tf,
         setup_tf=cfg.setup_tf,
         entry_tf=cfg.entry_tf,
@@ -146,6 +159,10 @@ async def update_config(body: ConfigUpdate, session: SessionDep) -> ConfigOut:
     updates = body.model_dump(exclude_none=True)
     if "watchlist" in updates:
         updates["watchlist_csv"] = ",".join(s.upper().strip() for s in updates.pop("watchlist"))
+    if "forex_watchlist" in updates:
+        updates["forex_watchlist_csv"] = ",".join(
+            s.upper().strip() for s in updates.pop("forex_watchlist")
+        )
 
     # Validate timeframes.
     for tf_field in ("bias_tf", "setup_tf", "entry_tf"):
@@ -178,6 +195,29 @@ async def delete_binance_keys(session: SessionDep) -> ConfigOut:
     cfg = await get_or_create_config(session)
     cfg.binance_api_key_enc = ""
     cfg.binance_api_secret_enc = ""
+    session.add(cfg)
+    await session.commit()
+    await session.refresh(cfg)
+    return _to_out(cfg)
+
+
+@router.post("/twelvedata-key", response_model=ConfigOut)
+async def save_twelvedata_key(
+    body: TwelveDataKeyUpdate, session: SessionDep
+) -> ConfigOut:
+    """Store the TwelveData API key (encrypted). Used in FOREX market mode."""
+    cfg = await get_or_create_config(session)
+    cfg.twelvedata_api_key_enc = encrypt_secret(body.api_key.strip())
+    session.add(cfg)
+    await session.commit()
+    await session.refresh(cfg)
+    return _to_out(cfg)
+
+
+@router.delete("/twelvedata-key", response_model=ConfigOut)
+async def delete_twelvedata_key(session: SessionDep) -> ConfigOut:
+    cfg = await get_or_create_config(session)
+    cfg.twelvedata_api_key_enc = ""
     session.add(cfg)
     await session.commit()
     await session.refresh(cfg)

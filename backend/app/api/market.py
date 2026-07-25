@@ -10,7 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.binance.rest import VALID_TIMEFRAMES, BinanceREST
+from app.binance.rest import VALID_TIMEFRAMES
+from app.datasource.factory import get_data_source
 from app.strategy.channel import compute_channel
 from app.strategy.indicators import find_swings, sr_zones
 
@@ -44,11 +45,15 @@ async def get_klines(
             f"invalid interval; valid: {', '.join(VALID_TIMEFRAMES)}",
         )
     sym = symbol.upper()
-    async with BinanceREST() as rest:
+    try:
+        source = await get_data_source()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)) from e
+    async with source:
         try:
-            df = await rest.get_klines(sym, interval, limit=limit)
+            df = await source.get_klines(sym, interval, limit=limit)
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"binance error: {e}") from e
+            raise HTTPException(502, f"market data error: {e}") from e
 
     candles: list[Candle] = []
     for ts, row in df.iterrows():
@@ -68,11 +73,15 @@ async def get_klines(
 
 @router.get("/ticker", response_model=dict)
 async def get_ticker(symbol: str = Query(..., min_length=3, max_length=20)) -> dict:
-    async with BinanceREST() as rest:
+    try:
+        source = await get_data_source()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)) from e
+    async with source:
         try:
-            price = await rest.get_ticker_price(symbol.upper())
+            price = await source.get_ticker_price(symbol.upper())
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"binance error: {e}") from e
+            raise HTTPException(502, f"market data error: {e}") from e
     return {"symbol": symbol.upper(), "price": price}
 
 
@@ -129,11 +138,15 @@ async def get_channel(
     # Fetch a bit more than lookback so the regression has stable indexing.
     fetch_limit = min(lookback + 50, 1500)
 
-    async with BinanceREST() as rest:
+    try:
+        source = await get_data_source()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)) from e
+    async with source:
         try:
-            df = await rest.get_klines(sym, interval, limit=fetch_limit)
+            df = await source.get_klines(sym, interval, limit=fetch_limit)
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"binance error: {e}") from e
+            raise HTTPException(502, f"market data error: {e}") from e
 
     result = compute_channel(df, lookback=lookback, prefer=algorithm)
     if result is None:
@@ -203,11 +216,15 @@ async def get_sr(
         )
     sym = symbol.upper()
 
-    async with BinanceREST() as rest:
+    try:
+        source = await get_data_source()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)) from e
+    async with source:
         try:
-            df = await rest.get_klines(sym, interval, limit=lookback)
+            df = await source.get_klines(sym, interval, limit=lookback)
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"binance error: {e}") from e
+            raise HTTPException(502, f"market data error: {e}") from e
 
     if len(df) < 20:
         return SRResponse(symbol=sym, interval=interval, lookback=len(df), levels=[])

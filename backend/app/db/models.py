@@ -37,6 +37,18 @@ class TradingMode(str, Enum):
     LIVE = "live"
 
 
+class MarketMode(str, Enum):
+    """Which market universe the bot is analysing right now.
+
+    - CRYPTO: Binance USDT-M Futures (execution enabled).
+    - FOREX:  TwelveData feed for MT5-style pairs (signals-only; user
+              executes manually in Exness or another MT5 broker).
+    """
+
+    CRYPTO = "crypto"
+    FOREX = "forex"
+
+
 class TrailingMode(str, Enum):
     """Trailing-stop algorithm mode.
 
@@ -96,17 +108,27 @@ class UserConfig(SQLModel, table=True):
     trading_mode: TradingMode = Field(default=TradingMode.PAPER)
     scanner_enabled: bool = Field(default=False)
 
-    # Binance API (encrypted at rest)
+    # Market mode (crypto → Binance; forex → TwelveData, signals-only)
+    market_mode: MarketMode = Field(default=MarketMode.CRYPTO)
+
+    # Binance API (encrypted at rest) — used in CRYPTO mode only.
     binance_api_key_enc: str = Field(default="")
     binance_api_secret_enc: str = Field(default="")
     binance_testnet: bool = Field(default=True)
 
-    # Watchlist
+    # TwelveData API key (encrypted) — used in FOREX mode.
+    twelvedata_api_key_enc: str = Field(default="")
+
+    # Watchlist per market mode. The scanner reads the appropriate one
+    # depending on ``market_mode``.
     watchlist_csv: str = Field(
         default=(
             "ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,"
             "ADAUSDT,AVAXUSDT,LINKUSDT,SUIUSDT,1000PEPEUSDT"
         )
+    )
+    forex_watchlist_csv: str = Field(
+        default="XAUUSD,EURUSD,GBPUSD,GBPJPY,AUDUSD,USDJPY,USDCAD,NZDUSD"
     )
 
     # Multi-timeframe

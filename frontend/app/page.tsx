@@ -71,8 +71,10 @@ export default function DashboardPage() {
       setOpenTrades(trades);
       setErr(null);
 
-      // Default chart selection once config is loaded.
-      setChartSymbol((cur) => cur ?? c.watchlist[0] ?? "BTCUSDT");
+      // Default chart selection once config is loaded. Pick the right
+      // watchlist for the current market.
+      const wl = c.market_mode === "forex" ? c.forex_watchlist : c.watchlist;
+      setChartSymbol((cur) => cur ?? wl[0] ?? "BTCUSDT");
       setChartTf((cur) => cur ?? c.entry_tf);
     } catch (e) {
       setErr(String(e));
@@ -169,6 +171,32 @@ export default function DashboardPage() {
     }
   };
 
+  const toggleMarket = async () => {
+    if (!cfg) return;
+    const next = cfg.market_mode === "crypto" ? "forex" : "crypto";
+    if (next === "forex" && !cfg.twelvedata_configured) {
+      alert(
+        "Forex mode needs a TwelveData API key.\n" +
+          "Go to Settings → TwelveData API key and save one first.",
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      const updated = await api.patchConfig({ market_mode: next });
+      setCfg(updated);
+      // Reset chart symbol/tf so the dashboard picks a valid one for the new mode.
+      setChartSymbol(null);
+      setChartTf(null);
+      localStorage.removeItem("kcs.chart.symbol");
+      localStorage.removeItem("kcs.chart.tf");
+    } catch (e) {
+      alert(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Trades filtered by the chart symbol so PriceChart only draws relevant lines
   // (PriceChart also filters internally, but this saves prop churn).
   const openTradesForSymbol = useMemo(
@@ -185,8 +213,13 @@ export default function DashboardPage() {
 
   // Watchlist + any open-trade symbols not already in it → chart selector options.
   const chartSymbols = useMemo(() => {
-    const set = new Set<string>(cfg?.watchlist ?? []);
-    for (const t of openTrades) set.add(t.symbol);
+    const baseWL =
+      cfg?.market_mode === "forex" ? cfg?.forex_watchlist : cfg?.watchlist;
+    const set = new Set<string>(baseWL ?? []);
+    // Crypto trades — only show under crypto mode.
+    if (cfg?.market_mode !== "forex") {
+      for (const t of openTrades) set.add(t.symbol);
+    }
     if (chartSymbol) set.add(chartSymbol);
     return Array.from(set);
   }, [cfg, openTrades, chartSymbol]);
@@ -218,14 +251,33 @@ export default function DashboardPage() {
           {cfg && (
             <>
               <button
-                onClick={toggleMode}
+                onClick={toggleMarket}
                 disabled={busy}
+                className={clsx(
+                  "px-3 py-2 rounded font-semibold text-sm border",
+                  cfg.market_mode === "forex"
+                    ? "bg-yellow-500/20 text-yellow-300 border-yellow-400/40"
+                    : "bg-blue-500/20 text-blue-300 border-blue-400/40",
+                )}
+                title="Switch between Crypto (Binance) and Forex (TwelveData)"
+              >
+                {cfg.market_mode === "forex" ? "FOREX" : "CRYPTO"}
+              </button>
+              <button
+                onClick={toggleMode}
+                disabled={busy || cfg.market_mode === "forex"}
                 className={clsx(
                   "px-3 py-2 rounded font-semibold text-sm",
                   cfg.trading_mode === "live"
                     ? "bg-short/20 text-short border border-short/40"
                     : "bg-bg-card text-muted border border-border",
+                  cfg.market_mode === "forex" && "opacity-50 cursor-not-allowed",
                 )}
+                title={
+                  cfg.market_mode === "forex"
+                    ? "Forex mode is signals-only; no auto-trade"
+                    : ""
+                }
               >
                 {cfg.trading_mode === "live" ? "LIVE" : "PAPER"}
               </button>
@@ -375,6 +427,7 @@ export default function DashboardPage() {
             showSR={showSR}
             onSRInfo={handleSRInfo}
             mtfIntervals={mtfIntervals}
+            enableRealtime={cfg.market_mode === "crypto"}
           />
         ) : (
           <div className="h-[480px] bg-bg-soft rounded flex items-center justify-center text-muted text-sm">

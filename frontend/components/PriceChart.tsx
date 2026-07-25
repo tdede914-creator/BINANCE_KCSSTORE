@@ -53,6 +53,12 @@ export interface PriceChartProps {
   onSRInfo?: (count: number | null) => void;
   /** Extra higher-TF intervals to overlay as auto channels (upper/lower only). */
   mtfIntervals?: string[];
+  /**
+   * If false, skips the direct Binance WebSocket connection. Needed for
+   * Forex mode where the symbol isn't listed on Binance — the chart then
+   * falls back to periodic REST refreshes.
+   */
+  enableRealtime?: boolean;
 }
 
 // --------------------------------------------------------------------------
@@ -89,6 +95,7 @@ export function PriceChart({
   srMaxLevels = 8,
   onSRInfo,
   mtfIntervals,
+  enableRealtime = true,
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -255,7 +262,9 @@ export function PriceChart({
         console.error("chart.load_klines_failed", e);
       }
 
-      connectWs();
+      if (enableRealtime) {
+        connectWs();
+      }
     }
 
     function connectWs() {
@@ -331,12 +340,30 @@ export function PriceChart({
     }
 
     boot();
+
+    // Periodic refresh for non-WS markets (Forex): re-fetch klines every
+    // 30 seconds so the chart isn't frozen.
+    let restRefreshTimer: ReturnType<typeof setInterval> | null = null;
+    if (!enableRealtime) {
+      restRefreshTimer = setInterval(async () => {
+        if (cancelled || !candleSeriesRef.current) return;
+        try {
+          const resp = await api.getKlines({ symbol, interval, limit: 500 });
+          if (cancelled) return;
+          candleSeriesRef.current.setData(resp.candles.map(toCandlestick));
+        } catch {
+          /* ignore transient errors */
+        }
+      }, 30_000);
+    }
+
     return () => {
       cancelled = true;
       if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+      if (restRefreshTimer) clearInterval(restRefreshTimer);
       ws?.close();
     };
-  }, [symbol, interval, emaFast, emaSlow, emaTrigger, testnet]);
+  }, [symbol, interval, emaFast, emaSlow, emaTrigger, testnet, enableRealtime]);
 
   // ---- 3. Draw / redraw trade level lines when openTrades changes -------
   useEffect(() => {

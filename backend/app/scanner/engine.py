@@ -31,12 +31,21 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.api.ws import event_bus
-from app.binance.rest import BinanceREST
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import decrypt_secret
+from app.datasource.base import MarketDataSource
+from app.datasource.binance_source import BinanceDataSource
+from app.datasource.factory import get_data_source
 from app.db.database import session_scope
-from app.db.models import Signal, SignalStatus, Trade, TradingMode, UserConfig
+from app.db.models import (
+    MarketMode,
+    Signal,
+    SignalStatus,
+    Trade,
+    TradingMode,
+    UserConfig,
+)
 from app.executor.base import BaseExecutor
 from app.executor.live import LiveExecutor
 from app.executor.paper import PaperExecutor
@@ -54,12 +63,43 @@ class ScannerEngine:
 
     def __init__(self) -> None:
         self._stop = asyncio.Event()
-        self._rest = BinanceREST()
+        # Current data source (rebuilt whenever market_mode changes).
+        self._source: MarketDataSource | None = None
+        self._source_mode: MarketMode | None = None
         # Cache filters per symbol to avoid re-fetching exchangeInfo every tick.
         self._filter_cache: dict[str, dict] = {}
 
     def stop(self) -> None:
         self._stop.set()
+
+    async def _ensure_source(self, mode: MarketMode) -> MarketDataSource | None:
+        """Return the data source that matches ``mode``, creating it on
+        demand and disposing of the previous one when the market changes.
+
+        Returns None if the source can't be built (e.g. missing
+        TwelveData API key for FOREX). Callers should skip the tick in
+        that case rather than crash.
+        """
+        if self._source is not None and self._source_mode == mode:
+            return self._source
+
+        # Dispose of the old source (if any) before creating a new one.
+        if self._source is not None:
+            try:
+                await self._source.close()
+            except Exception as e:  # noqa: BLE001
+                log.warning("scanner.source_close_error", error=str(e))
+            self._source = None
+            self._source_mode = None
+            self._filter_cache = {}
+
+        try:
+            self._source = await get_data_source(mode)
+            self._source_mode = mode
+        except RuntimeError as e:
+            log.warning("scanner.data_source_unavailable", error=str(e), mode=mode.value)
+            return None
+        return self._source
 
     # ----------------------------------------------------------------------
     # Main loop
@@ -80,46 +120,66 @@ class ScannerEngine:
                     timeout=settings.SCAN_INTERVAL_SECONDS,
                 )
         finally:
-            await self._rest.close()
+            if self._source is not None:
+                try:
+                    await self._source.close()
+                except Exception:  # noqa: BLE001
+                    pass
             log.info("scanner.stopped")
 
     async def _tick(self) -> None:
         cfg = await self._load_config()
 
-        # 1) Always reconcile open trades using latest prices.
-        prices = await self._fetch_current_prices(self._all_relevant_symbols(cfg))
-        changed = await self._executor_for(cfg).check_open_trades(prices)
-        for trade in changed:
-            await event_bus.publish(
-                {
-                    "type": "trade.update",
-                    "data": _trade_dict(trade),
-                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-                }
+        # Pick / refresh the data source for the current market mode.
+        source = await self._ensure_source(cfg.market_mode)
+        if source is None:
+            # Missing credentials for the selected market — noop this tick.
+            return
+
+        # 1) Reconcile open trades in CRYPTO mode. FOREX mode is signal-only
+        # (no executor), so there's nothing to reconcile.
+        if cfg.market_mode == MarketMode.CRYPTO:
+            prices = await self._fetch_current_prices(
+                source, self._all_relevant_symbols(cfg)
             )
+            changed = await self._executor_for(cfg).check_open_trades(prices)
+            for trade in changed:
+                await event_bus.publish(
+                    {
+                        "type": "trade.update",
+                        "data": _trade_dict(trade),
+                        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                    }
+                )
 
         # 2) If scanner disabled, we stop here.
         if not cfg.scanner_enabled:
             return
 
         strategy = MTFConfluenceStrategy(self._ctx_from_config(cfg))
-        watchlist = [s for s in cfg.watchlist_csv.split(",") if s]
+        watchlist_csv = (
+            cfg.forex_watchlist_csv
+            if cfg.market_mode == MarketMode.FOREX
+            else cfg.watchlist_csv
+        )
+        watchlist = [s for s in watchlist_csv.split(",") if s]
 
-        # Guard concurrency
-        open_count = await self._count_open_trades(cfg.trading_mode)
-        if open_count >= cfg.max_concurrent_positions:
-            log.debug(
-                "scanner.max_positions_reached",
-                open_count=open_count,
-                cap=cfg.max_concurrent_positions,
-            )
-            return
+        # Concurrency guard only applies to crypto (paper/live executions).
+        if cfg.market_mode == MarketMode.CRYPTO:
+            open_count = await self._count_open_trades(cfg.trading_mode)
+            if open_count >= cfg.max_concurrent_positions:
+                log.debug(
+                    "scanner.max_positions_reached",
+                    open_count=open_count,
+                    cap=cfg.max_concurrent_positions,
+                )
+                return
 
         for symbol in watchlist:
             if self._stop.is_set():
                 break
             try:
-                await self._scan_one(symbol, cfg, strategy)
+                await self._scan_one(symbol, cfg, strategy, source)
             except Exception as e:  # noqa: BLE001
                 log.warning("scanner.symbol_error", symbol=symbol, error=str(e))
 
@@ -132,16 +192,19 @@ class ScannerEngine:
         symbol: str,
         cfg: UserConfig,
         strategy: MTFConfluenceStrategy,
+        source: MarketDataSource,
     ) -> None:
-        # Skip if there's already an open trade for this symbol
-        if await self._has_open_trade(symbol, cfg.trading_mode):
+        # Skip if there's already an open trade for this symbol (crypto only).
+        if cfg.market_mode == MarketMode.CRYPTO and await self._has_open_trade(
+            symbol, cfg.trading_mode
+        ):
             return
 
         # Fetch klines for the 3 timeframes.
         bias_df, setup_df, entry_df = await asyncio.gather(
-            self._rest.get_klines(symbol, cfg.bias_tf, limit=300),
-            self._rest.get_klines(symbol, cfg.setup_tf, limit=200),
-            self._rest.get_klines(symbol, cfg.entry_tf, limit=200),
+            source.get_klines(symbol, cfg.bias_tf, limit=300),
+            source.get_klines(symbol, cfg.setup_tf, limit=200),
+            source.get_klines(symbol, cfg.entry_tf, limit=200),
         )
 
         proposal = strategy.evaluate(
@@ -156,12 +219,36 @@ class ScannerEngine:
         if proposal is None:
             return
 
+        # -------------- FOREX: signals-only path --------------
+        if cfg.market_mode == MarketMode.FOREX:
+            signal = await self._save_forex_signal(proposal, cfg)
+            log.info(
+                "scanner.signal.forex",
+                symbol=symbol,
+                side=proposal.side.value,
+                confidence=proposal.confidence,
+            )
+            await event_bus.publish(
+                {
+                    "type": "signal.new",
+                    "data": _signal_dict(signal),
+                    "trade": None,
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                }
+            )
+            return
+
+        # -------------- CRYPTO: full paper/live execution --------------
         # Get symbol filters (cached)
         if symbol not in self._filter_cache:
-            self._filter_cache[symbol] = await self._rest.get_symbol_filters(symbol)
+            filters = await source.get_symbol_filters(symbol)
+            if filters is None:
+                log.warning("scanner.no_filters", symbol=symbol)
+                return
+            self._filter_cache[symbol] = filters
         filters = self._filter_cache[symbol]
 
-        equity = await self._equity_for(cfg)
+        equity = await self._equity_for(cfg, source)
 
         try:
             sized = RiskManager(
@@ -271,8 +358,11 @@ class ScannerEngine:
             return LiveExecutor(rest=self._rest)
         return PaperExecutor()
 
-    async def _equity_for(self, cfg: UserConfig) -> float:
+    async def _equity_for(self, cfg: UserConfig, source: MarketDataSource) -> float:
         if cfg.trading_mode == TradingMode.PAPER:
+            return float(cfg.paper_balance)
+        # Live mode is crypto-only; use the underlying Binance REST client.
+        if not isinstance(source, BinanceDataSource):
             return float(cfg.paper_balance)
         if not cfg.binance_api_key_enc:
             log.warning("scanner.live_no_credentials")
@@ -280,22 +370,31 @@ class ScannerEngine:
         try:
             key = decrypt_secret(cfg.binance_api_key_enc)
             secret = decrypt_secret(cfg.binance_api_secret_enc)
-            return await self._rest.get_balance_usdt(key, secret)
+            return await source._rest.get_balance_usdt(key, secret)  # noqa: SLF001
         except Exception as e:  # noqa: BLE001
             log.error("scanner.equity_fetch_failed", error=str(e))
             return 0.0
 
     def _all_relevant_symbols(self, cfg: UserConfig) -> list[str]:
-        watchlist = {s for s in cfg.watchlist_csv.split(",") if s}
+        csv = (
+            cfg.forex_watchlist_csv
+            if cfg.market_mode == MarketMode.FOREX
+            else cfg.watchlist_csv
+        )
+        watchlist = {s for s in csv.split(",") if s}
         return sorted(watchlist)
 
-    async def _fetch_current_prices(self, symbols: list[str]) -> dict[str, float]:
+    async def _fetch_current_prices(
+        self,
+        source: MarketDataSource,
+        symbols: list[str],
+    ) -> dict[str, float]:
         if not symbols:
             return {}
 
         async def _one(sym: str) -> tuple[str, float | None]:
             try:
-                return sym, await self._rest.get_ticker_price(sym)
+                return sym, await source.get_ticker_price(sym)
             except Exception as e:  # noqa: BLE001
                 log.debug("scanner.price_fetch_failed", symbol=sym, error=str(e))
                 return sym, None
@@ -323,6 +422,36 @@ class ScannerEngine:
                 )
             )
             return rows.first() is not None
+
+    async def _save_forex_signal(
+        self,
+        proposal: SignalProposal,
+        cfg: UserConfig,
+    ) -> Signal:
+        """Persist a forex signal (no execution, quantity/risk are zero)."""
+        signal = Signal(
+            symbol=proposal.symbol,
+            side=proposal.side.value,  # type: ignore[arg-type]
+            status=SignalStatus.PENDING,  # forex signals stay PENDING (no trade)
+            mode=cfg.trading_mode,
+            bias_tf=proposal.bias_tf,
+            setup_tf=proposal.setup_tf,
+            entry_tf=proposal.entry_tf,
+            entry_price=proposal.entry_price,
+            stop_loss=proposal.stop_loss,
+            take_profit_1=proposal.take_profit_1,
+            take_profit_2=proposal.take_profit_2,
+            leverage=cfg.leverage,
+            quantity=0.0,
+            risk_amount_usdt=0.0,
+            confidence=proposal.confidence,
+            reason=proposal.reason + " | forex signal (manual execution)",
+            diagnostics=proposal.diagnostics,
+        )
+        async with session_scope() as session:
+            session.add(signal)
+            await session.flush()
+        return signal
 
     async def _save_signal(
         self,

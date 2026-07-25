@@ -1,5 +1,7 @@
 export type TradingMode = "paper" | "live";
 
+export type MarketMode = "crypto" | "forex";
+
 export type SignalSide = "LONG" | "SHORT";
 
 export type SignalStatus =
@@ -17,10 +19,13 @@ export type TrailingMode = "off" | "atr" | "percent";
 export interface Config {
   trading_mode: TradingMode;
   scanner_enabled: boolean;
+  market_mode: MarketMode;
   binance_api_key_masked: string;
   binance_api_configured: boolean;
   binance_testnet: boolean;
+  twelvedata_configured: boolean;
   watchlist: string[];
+  forex_watchlist: string[];
   bias_tf: string;
   setup_tf: string;
   entry_tf: string;

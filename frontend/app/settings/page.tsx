@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [testnet, setTestnet] = useState(true);
+  const [tdKey, setTdKey] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -88,6 +89,38 @@ export default function SettingsPage() {
       const c = await api.deleteBinanceKeys();
       setCfg(c);
       setMsg({ text: "Keys removed.", kind: "ok" });
+    } catch (e) {
+      setMsg({ text: String(e), kind: "err" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveTdKey = async () => {
+    if (!tdKey.trim()) {
+      setMsg({ text: "TwelveData API key is required.", kind: "err" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const c = await api.saveTwelvedataKey(tdKey.trim());
+      setCfg(c);
+      setTdKey("");
+      setMsg({ text: "TwelveData key saved.", kind: "ok" });
+    } catch (e) {
+      setMsg({ text: String(e), kind: "err" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeTdKey = async () => {
+    if (!window.confirm("Remove TwelveData API key?")) return;
+    setSaving(true);
+    try {
+      const c = await api.deleteTwelvedataKey();
+      setCfg(c);
+      setMsg({ text: "TwelveData key removed.", kind: "ok" });
     } catch (e) {
       setMsg({ text: String(e), kind: "err" });
     } finally {
@@ -175,6 +208,46 @@ export default function SettingsPage() {
         </div>
       </Section>
 
+      {/* TwelveData (Forex) */}
+      <Section
+        title="TwelveData API Key (Forex mode)"
+        hint="Required to use FOREX market mode. Free tier at twelvedata.com gives 800 requests/day. Key is encrypted before being stored."
+      >
+        <div className="text-sm mb-3">
+          Status:{" "}
+          {cfg.twelvedata_configured ? (
+            <span className="text-long font-mono">Configured ✓</span>
+          ) : (
+            <span className="text-muted">Not configured</span>
+          )}
+        </div>
+        <div className="grid gap-3">
+          <input
+            type="password"
+            placeholder="TwelveData API key"
+            value={tdKey}
+            onChange={(e) => setTdKey(e.target.value)}
+            className="bg-bg-soft border border-border rounded px-3 py-2 text-sm font-mono"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={saveTdKey}
+              disabled={saving || tdKey.length < 4}
+              className="px-4 py-2 bg-long/20 hover:bg-long/30 text-long rounded text-sm disabled:opacity-50"
+            >
+              Save key
+            </button>
+            <button
+              onClick={removeTdKey}
+              disabled={saving || !cfg.twelvedata_configured}
+              className="px-4 py-2 bg-short/20 hover:bg-short/30 text-short rounded text-sm disabled:opacity-50 ml-auto"
+            >
+              Remove key
+            </button>
+          </div>
+        </div>
+      </Section>
+
       {/* Trading */}
       <Section title="Trading">
         <div className="grid grid-cols-2 gap-4">
@@ -227,14 +300,33 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* Watchlist */}
-      <Section title="Watchlist" hint="Comma-separated symbols. Only USDT-M perpetuals.">
+      {/* Watchlist — Crypto */}
+      <Section
+        title="Crypto Watchlist"
+        hint="Comma-separated Binance USDT-M perpetuals. Used when Market Mode = Crypto."
+      >
         <TextInput
           value={cfg.watchlist.join(",")}
           onCommit={(v) =>
             patch({ watchlist: v.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) })
           }
           placeholder="BTCUSDT,ETHUSDT,SOLUSDT"
+        />
+      </Section>
+
+      {/* Watchlist — Forex */}
+      <Section
+        title="Forex Watchlist"
+        hint="Comma-separated FX / commodity pairs (MT5 style). Used when Market Mode = Forex. TwelveData supports: XAUUSD, EURUSD, GBPUSD, GBPJPY, AUDUSD, USDJPY, USDCAD, NZDUSD, and many more."
+      >
+        <TextInput
+          value={cfg.forex_watchlist.join(",")}
+          onCommit={(v) =>
+            patch({
+              forex_watchlist: v.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
+            })
+          }
+          placeholder="XAUUSD,EURUSD,GBPUSD,GBPJPY,AUDUSD"
         />
       </Section>
 
