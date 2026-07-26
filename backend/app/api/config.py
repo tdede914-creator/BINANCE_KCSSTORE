@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import SessionDep, get_or_create_config
 from app.binance.rest import VALID_TIMEFRAMES, BinanceREST
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from app.core.logging import get_logger
 from app.core.security import decrypt_secret, encrypt_secret, mask_key
@@ -258,15 +258,30 @@ async def reset_paper(body: PaperResetRequest, session: SessionDep) -> PaperRese
     try:
         cfg = await get_or_create_config(session)
 
-        trades_result = await session.execute(
-            delete(Trade).where(Trade.mode == TradingMode.PAPER)
+        # signals.trade_id → trades.id AND trades.signal_id → signals.id
+        # form a circular FK, so a naive DELETE of either table hits a
+        # ForeignKeyViolationError. NULL both directions first, then the
+        # deletes are independent and can happen in either order.
+        await session.execute(
+            update(Signal)
+            .where(Signal.mode == TradingMode.PAPER)
+            .values(trade_id=None)
         )
-        trades_deleted = trades_result.rowcount or 0
+        await session.execute(
+            update(Trade)
+            .where(Trade.mode == TradingMode.PAPER)
+            .values(signal_id=None)
+        )
 
         signals_result = await session.execute(
             delete(Signal).where(Signal.mode == TradingMode.PAPER)
         )
         signals_deleted = signals_result.rowcount or 0
+
+        trades_result = await session.execute(
+            delete(Trade).where(Trade.mode == TradingMode.PAPER)
+        )
+        trades_deleted = trades_result.rowcount or 0
 
         if body.new_balance is not None:
             cfg.paper_balance = float(body.new_balance)
