@@ -240,6 +240,9 @@ def volume_ma(series: pd.Series, period: int = 20) -> pd.Series:
 # ==========================================================================
 
 
+_ENRICH_COLUMNS = ("ema_fast", "ema_slow", "ema_trigger", "rsi", "atr", "vol_ma")
+
+
 def enrich(
     df: pd.DataFrame,
     *,
@@ -253,7 +256,15 @@ def enrich(
 
     Columns added:
         ema_fast, ema_slow, ema_trigger, rsi, atr, vol_ma
+
+    Fast path: if ``df`` already has ALL indicator columns (e.g. because
+    the backtest engine pre-enriched it once and then sliced), we
+    return it as-is instead of recomputing. Slicing pandas Series and
+    calling ewm() 17k+ times was the main bottleneck of the naive
+    backtest (multi-minute runs at 5m/60d).
     """
+    if all(col in df.columns for col in _ENRICH_COLUMNS):
+        return df
     out = df.copy()
     out["ema_fast"] = ema(out["close"], ema_fast)
     out["ema_slow"] = ema(out["close"], ema_slow)

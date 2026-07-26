@@ -15,22 +15,31 @@ import { StatCard } from "@/components/StatCard";
 // Timeframes valid on both the strategy and Binance klines endpoint.
 const TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"];
 
-// Rough runtime hint so the user isn't surprised by a 60-second run.
+// Rough runtime estimate so the user isn't surprised by a slow run.
+// Numbers include the recent indicator-precompute optimization; if the
+// backtest keeps getting slower we should re-measure and update these.
+const _RUNTIME_SEC_PER_DAY: Record<string, number> = {
+  "1m": 6,
+  "3m": 2,
+  "5m": 1.3,
+  "15m": 0.5,
+  "30m": 0.3,
+  "1h": 0.15,
+  "2h": 0.08,
+  "4h": 0.05,
+  "1d": 0.02,
+};
+
+const runtimeSecondsFor = (tf: string, days: number): number => {
+  const sPerDay = _RUNTIME_SEC_PER_DAY[tf] ?? 0.5;
+  return Math.max(3, Math.round(sPerDay * days));
+};
+
 const runtimeHintFor = (tf: string, days: number): string => {
-  const rough = {
-    "1m": 5,
-    "3m": 2,
-    "5m": 1.2,
-    "15m": 0.4,
-    "30m": 0.2,
-    "1h": 0.1,
-    "2h": 0.05,
-    "4h": 0.03,
-    "1d": 0.01,
-  } as Record<string, number>;
-  const secondsPerDay = rough[tf] ?? 0.5;
-  const est = Math.max(3, Math.round(secondsPerDay * days));
-  return `~${est}s`;
+  const s = runtimeSecondsFor(tf, days);
+  if (s < 60) return `~${s}s`;
+  const m = s / 60;
+  return `~${m.toFixed(1)}m`;
 };
 
 export default function BacktestPage() {
@@ -154,20 +163,31 @@ export default function BacktestPage() {
           </Field>
         </div>
 
-        <div className="flex items-center gap-3 pt-2 border-t border-border/50">
-          <button
-            onClick={run}
-            disabled={running || !symbol}
-            className="px-4 py-2 bg-long/20 hover:bg-long/30 text-long border border-long/40 rounded text-sm font-semibold disabled:opacity-50"
-          >
-            {running ? "Running…" : "Run backtest"}
-          </button>
-          {running && (
-            <span className="text-xs text-muted animate-pulse">
-              Fetching klines and replaying the strategy — this may take a
-              moment for longer periods.
-            </span>
+        <div className="flex flex-col gap-2 pt-2 border-t border-border/50">
+          {runtimeSecondsFor(entryTf, days) > 90 && !running && (
+            <div className="text-xs text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 rounded px-3 py-2">
+              ⚠️ Estimated runtime is ~
+              {runtimeHintFor(entryTf, days)} — heavy but doable.
+              Tip: try Entry TF 15m or 1h for a faster first-pass; drop to
+              5m only when tuning promising setups.
+            </div>
           )}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={run}
+              disabled={running || !symbol}
+              className="px-4 py-2 bg-long/20 hover:bg-long/30 text-long border border-long/40 rounded text-sm font-semibold disabled:opacity-50"
+            >
+              {running ? "Running…" : "Run backtest"}
+            </button>
+            {running && (
+              <span className="text-xs text-muted animate-pulse">
+                Fetching klines, precomputing indicators, replaying the
+                strategy… Backend logs 'backtest.progress' every 500 bars if
+                you want to watch it.
+              </span>
+            )}
+          </div>
         </div>
       </section>
 

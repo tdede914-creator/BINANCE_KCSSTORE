@@ -30,7 +30,7 @@ import pandas as pd
 
 from app.binance.rest import BinanceREST
 from app.core.logging import get_logger
-from app.risk.manager import RiskManager, RiskRejected
+from app.strategy.indicators import enrich as _enrich_indicators
 from app.strategy.mtf_confluence import MTFConfluenceStrategy
 from app.strategy.types import Side, SignalProposal, StrategyContext
 
@@ -241,6 +241,28 @@ class BacktestEngine:
             entry_bars=len(entry_df),
         )
 
+        # HUGE speed-up: pre-compute EMAs / RSI / ATR / vol MA on the full
+        # DataFrames just once. The strategy's enrich() sees these columns
+        # already present and returns the df as-is, saving 3 ewm() +
+        # ATR + RSI recomputations per iteration.
+        s = cfg.strategy_ctx
+        bias_df = _enrich_indicators(
+            bias_df,
+            ema_fast=s.ema_fast, ema_slow=s.ema_slow, ema_trigger=s.ema_trigger,
+            rsi_period=s.rsi_period, atr_period=s.atr_period,
+        )
+        setup_df = _enrich_indicators(
+            setup_df,
+            ema_fast=s.ema_fast, ema_slow=s.ema_slow, ema_trigger=s.ema_trigger,
+            rsi_period=s.rsi_period, atr_period=s.atr_period,
+        )
+        entry_df = _enrich_indicators(
+            entry_df,
+            ema_fast=s.ema_fast, ema_slow=s.ema_slow, ema_trigger=s.ema_trigger,
+            rsi_period=s.rsi_period, atr_period=s.atr_period,
+        )
+        log.info("backtest.indicators_precomputed", symbol=cfg.symbol)
+
         strategy = MTFConfluenceStrategy(cfg.strategy_ctx)
         trades: list[SimTrade] = []
         open_trade: SimTrade | None = None
@@ -252,9 +274,21 @@ class BacktestEngine:
 
         # Precompute datetime index once for fast lookups.
         entry_index = entry_df.index
+        total_bars = len(entry_df)
 
-        for i in range(len(entry_df)):
+        for i in range(total_bars):
             t = entry_index[i]
+            # Progress log every ~500 bars so long backtests are observable
+            # in 'docker compose logs backend | grep backtest.progress'
+            # instead of feeling like the request hung.
+            if i and i % 500 == 0:
+                log.info(
+                    "backtest.progress",
+                    i=i,
+                    total=total_bars,
+                    trades_so_far=len(trades),
+                    equity=round(equity, 4),
+                )
             # Skip until we're inside the requested period.
             if t < pd.Timestamp(start_time):
                 continue
@@ -320,6 +354,14 @@ class BacktestEngine:
             equity_curve.append(
                 EquityPoint(time=start_time, equity=cfg.initial_balance)
             )
+
+        log.info(
+            "backtest.done",
+            symbol=cfg.symbol,
+            total_bars=total_bars,
+            trades=len(trades),
+            final_equity=round(equity, 4),
+        )
 
         return BacktestResult(
             config=cfg,
