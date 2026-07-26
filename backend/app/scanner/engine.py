@@ -458,25 +458,56 @@ class ScannerEngine:
 
     @staticmethod
     async def _paper_equity(cfg: UserConfig) -> float:
-        """Return the *effective* paper balance for risk sizing.
+        """Return AVAILABLE paper equity for opening a NEW trade.
 
-        Effective balance = starting balance + sum of realized P&L across
-        every paper trade (including partial TP1 fills whose profit has
-        already been booked). This is what makes wins compound and losses
-        shrink the pot naturally, matching how a real Binance wallet
-        behaves.
+            available = starting_balance
+                      + realized P&L across all paper trades
+                      - margin locked in currently OPEN paper positions
 
-        Never returns a negative number — clamped at 0 so the risk
-        manager rejects new trades cleanly once the pot is empty rather
-        than trying to size against negative equity.
+        This matches how Binance actually works: money already committed
+        as margin on open positions is not usable to size a new position.
+        Without this correction, three concurrent trades with a $10 wallet
+        could each request $3 margin each from the "full" $10 → total $9
+        deployed, but each sizing decision saw the whole $10 as free, so
+        the total could easily exceed the wallet and produce unrealistic
+        results.
+
+        Never returns a negative number — clamped at 0 so the risk manager
+        rejects new trades cleanly once the pot is exhausted.
         """
         async with session_scope() as session:
-            stmt = select(
+            # 1) Realized P&L (wins + losses already booked, incl. partial TP1)
+            pnl_stmt = select(
                 func.coalesce(func.sum(Trade.realized_pnl_usdt), 0.0)
             ).where(Trade.mode == TradingMode.PAPER)
-            result = await session.execute(stmt)
-            realized = float(result.scalar_one() or 0.0)
-        return max(float(cfg.paper_balance) + realized, 0.0)
+            realized = float(
+                (await session.execute(pnl_stmt)).scalar_one() or 0.0
+            )
+
+            # 2) Margin currently locked in open positions
+            open_stmt = select(Trade).where(
+                Trade.mode == TradingMode.PAPER,
+                Trade.status.in_(
+                    [SignalStatus.OPEN, SignalStatus.TP1_HIT]
+                ),
+            )
+            open_trades = list(
+                (await session.execute(open_stmt)).scalars().all()
+            )
+
+        locked_margin = 0.0
+        for t in open_trades:
+            status_val = (
+                t.status.value if hasattr(t.status, "value") else str(t.status)
+            )
+            remaining_qty = (
+                t.quantity / 2.0 if status_val == "TP1_HIT" else t.quantity
+            )
+            locked_margin += (t.entry_price * remaining_qty) / max(t.leverage, 1)
+
+        wallet = float(cfg.paper_balance) + realized
+        available = wallet - locked_margin
+        return max(available, 0.0)
 
     def _all_relevant_symbols(self, cfg: UserConfig) -> list[str]:
         csv = (

@@ -212,6 +212,32 @@ export default function DashboardPage() {
     [showMTF, chartTf],
   );
 
+  // Paper-mode equity breakdown: what's in the wallet vs what's already
+  // locked as margin in open positions vs what's free for new trades.
+  const paperLocked = useMemo(() => {
+    if (!openTrades) return 0;
+    return openTrades
+      .filter((t) => t.mode === "paper")
+      .reduce((sum, t) => {
+        const remaining =
+          t.status === "TP1_HIT" ? t.quantity / 2 : t.quantity;
+        return sum + (t.entry_price * remaining) / Math.max(t.leverage, 1);
+      }, 0);
+  }, [openTrades]);
+
+  const paperWallet =
+    (cfg?.paper_balance ?? 0) + (stats?.total_pnl_usdt ?? 0);
+  const paperFree = Math.max(paperWallet - paperLocked, 0);
+
+  const paperEquityHint = useMemo(() => {
+    if (!cfg) return undefined;
+    const parts: string[] = [`wallet $${formatUsdt(paperWallet)}`];
+    if (paperLocked > 0) {
+      parts.push(`$${formatUsdt(paperLocked)} locked`);
+    }
+    return parts.join(" · ");
+  }, [cfg, paperWallet, paperLocked]);
+
   // Watchlist + any open-trade symbols not already in it → chart selector options.
   const chartSymbols = useMemo(() => {
     const baseWL =
@@ -308,25 +334,9 @@ export default function DashboardPage() {
         <StatCard label="Total trades" value={stats?.total_trades ?? "—"} />
         <StatCard label="Open" value={stats?.open_trades ?? "—"} />
         <StatCard
-          label="Paper equity"
-          value={
-            cfg && stats
-              ? `$${formatUsdt(cfg.paper_balance + stats.total_pnl_usdt)}`
-              : cfg
-                ? `$${formatUsdt(cfg.paper_balance)}`
-                : "—"
-          }
-          hint={
-            cfg
-              ? `start $${formatUsdt(cfg.paper_balance)} ${
-                  stats && stats.total_pnl_usdt !== 0
-                    ? `${stats.total_pnl_usdt >= 0 ? "+" : ""}${formatUsdt(
-                        stats.total_pnl_usdt,
-                      )}`
-                    : ""
-                }`
-              : undefined
-          }
+          label="Free margin"
+          value={cfg ? `$${formatUsdt(paperFree)}` : "—"}
+          hint={paperEquityHint}
         />
       </div>
 
