@@ -3,8 +3,41 @@ import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import type { Config } from "@/lib/types";
+import { WatchlistEditor } from "@/components/WatchlistEditor";
 
 const TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"];
+
+// Popular pairs surfaced as one-click chips in the watchlist editors.
+// Users can still type any symbol; these are just quick-adds.
+const CRYPTO_SUGGESTIONS = [
+  "BTCUSDT",
+  "ETHUSDT",
+  "SOLUSDT",
+  "BNBUSDT",
+  "XRPUSDT",
+  "DOGEUSDT",
+  "ADAUSDT",
+  "AVAXUSDT",
+  "LINKUSDT",
+  "SUIUSDT",
+  "1000PEPEUSDT",
+  "1000SHIBUSDT",
+  "OPUSDT",
+  "ARBUSDT",
+  "APTUSDT",
+];
+const FOREX_SUGGESTIONS = [
+  "XAUUSD",
+  "EURUSD",
+  "GBPUSD",
+  "GBPJPY",
+  "AUDUSD",
+  "USDJPY",
+  "USDCAD",
+  "NZDUSD",
+  "EURJPY",
+  "AUDJPY",
+];
 
 export default function SettingsPage() {
   const [cfg, setCfg] = useState<Config | null>(null);
@@ -303,30 +336,32 @@ export default function SettingsPage() {
       {/* Watchlist — Crypto */}
       <Section
         title="Crypto Watchlist"
-        hint="Comma-separated Binance USDT-M perpetuals. Used when Market Mode = Crypto."
+        hint="Binance USDT-M perpetuals scanned when Market Mode = Crypto. Add symbols one at a time, then click Save changes."
       >
-        <TextInput
-          value={cfg.watchlist.join(",")}
-          onCommit={(v) =>
-            patch({ watchlist: v.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) })
-          }
-          placeholder="BTCUSDT,ETHUSDT,SOLUSDT"
+        <WatchlistEditor
+          initial={cfg.watchlist}
+          placeholder="Add a Binance perp (e.g. BTCUSDT)"
+          suggestions={CRYPTO_SUGGESTIONS}
+          disabled={saving}
+          onSave={async (list) => {
+            await patch({ watchlist: list });
+          }}
         />
       </Section>
 
       {/* Watchlist — Forex */}
       <Section
         title="Forex Watchlist"
-        hint="Comma-separated FX / commodity pairs (MT5 style). Used when Market Mode = Forex. TwelveData supports: XAUUSD, EURUSD, GBPUSD, GBPJPY, AUDUSD, USDJPY, USDCAD, NZDUSD, and many more."
+        hint="FX / commodity pairs (MT5-style, no slash) scanned when Market Mode = Forex. TwelveData supports popular pairs like XAUUSD, EURUSD, GBPUSD, GBPJPY, AUDUSD, USDJPY, USDCAD, NZDUSD, and more."
       >
-        <TextInput
-          value={cfg.forex_watchlist.join(",")}
-          onCommit={(v) =>
-            patch({
-              forex_watchlist: v.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
-            })
-          }
-          placeholder="XAUUSD,EURUSD,GBPUSD,GBPJPY,AUDUSD"
+        <WatchlistEditor
+          initial={cfg.forex_watchlist}
+          placeholder="Add an FX pair (e.g. XAUUSD)"
+          suggestions={FOREX_SUGGESTIONS}
+          disabled={saving}
+          onSave={async (list) => {
+            await patch({ forex_watchlist: list });
+          }}
         />
       </Section>
 
