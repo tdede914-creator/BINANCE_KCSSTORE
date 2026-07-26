@@ -101,14 +101,33 @@ async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-    cache: "no-store",
-  });
+  // Only add Content-Type when there's a body. Bodyless POSTs (e.g.
+  // /api/trades/:id/close) previously included Content-Type: application/json
+  // which triggered a CORS preflight for no reason and made the browser
+  // more likely to surface an unhelpful 'TypeError: Failed to fetch'.
+  const headers: Record<string, string> = {
+    ...((init?.headers as Record<string, string>) ?? {}),
+  };
+  if (init?.body && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers,
+      cache: "no-store",
+    });
+  } catch (e) {
+    // Network-level failure: connection refused, DNS, timeout, CORS-block…
+    // Give the caller something more useful than a bare 'Failed to fetch'.
+    throw new Error(
+      `Network error contacting ${API_URL}${path}: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);

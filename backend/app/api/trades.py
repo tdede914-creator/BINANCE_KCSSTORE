@@ -7,11 +7,19 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 
+from datetime import datetime, timezone
+
 from app.api.deps import SessionDep
-from app.binance.rest import BinanceREST
+from app.core.logging import get_logger
+from app.datasource.factory import get_data_source
 from app.db.models import SignalStatus, Trade, TradingMode
 from app.executor.live import LiveExecutor
-from app.executor.paper import PaperExecutor
+
+log = get_logger(__name__)
+
+# Same fee used by PaperExecutor.close_trade so the manual-close P&L
+# matches auto-close P&L bookkeeping-wise.
+_PAPER_FEE_RATE = 0.0005
 
 router = APIRouter()
 
@@ -152,23 +160,93 @@ async def trade_stats(session: SessionDep, mode: TradingMode | None = None) -> S
 
 @router.post("/{trade_id}/close", response_model=TradeOut)
 async def close_trade(trade_id: int, session: SessionDep) -> TradeOut:
+    """Manually close an open trade at the current market price.
+
+    Kept intentionally simple: we perform the paper close inline against
+    the request's session instead of delegating to PaperExecutor. The
+    executor opens its own ``session_scope()``, which conflicts with the
+    request's session and causes SQLAlchemy to fail silently — the
+    endpoint would then hang or crash mid-response, showing up in the
+    browser as a generic 'TypeError: Failed to fetch'.
+    """
     trade = await session.get(Trade, trade_id)
     if trade is None:
         raise HTTPException(404, "Trade not found")
-    if trade.status not in (SignalStatus.OPEN, SignalStatus.TP1_HIT):
-        raise HTTPException(400, f"Trade is {trade.status}, cannot close")
 
-    # Fetch current price
-    async with BinanceREST() as rest:
-        price = await rest.get_ticker_price(trade.symbol)
+    # SignalStatus may be an enum or a plain string coming out of SQLite.
+    status_val = (
+        trade.status.value if hasattr(trade.status, "value") else str(trade.status)
+    )
+    if status_val not in ("OPEN", "TP1_HIT"):
+        raise HTTPException(400, f"Trade is {status_val}, cannot close")
 
-    if trade.mode == TradingMode.PAPER:
-        await PaperExecutor().close_trade(trade, current_price=price, reason="manual")
-        trade.status = SignalStatus.CLOSED_MANUAL
-    else:
-        await LiveExecutor().close_trade(trade, current_price=price, reason="manual")
+    # Fetch current price from whichever market this trade was opened on.
+    try:
+        source = await get_data_source()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)) from e
+
+    try:
+        async with source:
+            price = await source.get_ticker_price(trade.symbol)
+    except Exception as e:  # noqa: BLE001
+        log.warning("close.price_fetch_failed", trade_id=trade_id, error=str(e))
+        raise HTTPException(502, f"Failed to fetch current price: {e}") from e
+
+    mode_val = (
+        trade.mode.value if hasattr(trade.mode, "value") else str(trade.mode)
+    )
+    try:
+        if mode_val == "paper":
+            _paper_close_inline(trade, price)
+        else:
+            result = await LiveExecutor().close_trade(
+                trade, current_price=price, reason="manual"
+            )
+            if not result.ok:
+                raise HTTPException(502, f"Failed to close: {result.error}")
+            # LiveExecutor committed via its own session; we can't reuse the
+            # object as-is because SQLAlchemy may consider it stale. Detach
+            # it and reload from DB before returning.
+            session.expunge(trade)
+            trade = await session.get(Trade, trade_id)
+            if trade is None:
+                raise HTTPException(500, "Trade vanished after live close")
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.error("close.failed", trade_id=trade_id, error=str(e))
+        raise HTTPException(500, f"Close failed: {e}") from e
 
     session.add(trade)
     await session.commit()
     await session.refresh(trade)
     return _to_out(trade)
+
+
+def _paper_close_inline(trade: Trade, exit_price: float) -> None:
+    """Mutate ``trade`` in-place to reflect a manual paper close.
+
+    Uses the same fee (0.05% per side) and P&L math as
+    ``PaperExecutor.close_trade`` so histories stay consistent, but does
+    not open a new database session — the caller is expected to commit.
+    """
+    side_val = trade.side.value if hasattr(trade.side, "value") else str(trade.side)
+    if side_val == "LONG":
+        move = exit_price - trade.entry_price
+    else:
+        move = trade.entry_price - exit_price
+
+    pnl_usdt = move * trade.quantity
+    exit_fee = exit_price * trade.quantity * _PAPER_FEE_RATE
+    realized = pnl_usdt - exit_fee
+    margin = (trade.entry_price * trade.quantity) / max(trade.leverage, 1)
+    pnl_pct = pnl_usdt / max(margin, 1e-9) * 100.0
+
+    trade.exit_price = exit_price
+    trade.realized_pnl_usdt = round(realized, 4)
+    trade.realized_pnl_pct = round(pnl_pct, 4)
+    trade.fee_usdt = round((trade.fee_usdt or 0.0) + exit_fee, 4)
+    trade.closed_at = datetime.now(tz=timezone.utc)
+    trade.notes = "manual close via API"
+    trade.status = SignalStatus.CLOSED_MANUAL
