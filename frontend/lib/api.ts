@@ -166,6 +166,44 @@ export interface BacktestResponse {
   metrics: BacktestMetrics;
 }
 
+// -------- Batch backtest --------
+
+export interface BatchBacktestRequest {
+  symbols: string[];
+  bias_tf?: string;
+  setup_tf?: string;
+  entry_tf?: string;
+  days?: number;
+  initial_balance?: number;
+  risk_per_trade_pct?: number;
+  leverage?: number;
+  strategy_params?: BacktestStrategyParams;
+}
+
+export interface BatchBacktestSummary {
+  symbol: string;
+  total_trades: number;
+  win_rate_pct: number;
+  total_return_usdt: number;
+  total_return_pct: number;
+  profit_factor: number;
+  max_drawdown_pct: number;
+  avg_rr: number;
+  total_fees_usdt: number;
+  final_balance: number;
+  error: string | null;
+}
+
+export interface BatchBacktestResponse {
+  period_from: string | null;
+  period_to: string | null;
+  bias_tf: string;
+  setup_tf: string;
+  entry_tf: string;
+  days: number;
+  summaries: BatchBacktestSummary[];
+}
+
 /**
  * Resolve the backend URL.
  *
@@ -274,6 +312,11 @@ export const api = {
   // ----- Backtest -----
   runBacktest: (params: BacktestRequest) =>
     request<BacktestResponse>("/api/backtest/run", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
+  runBatchBacktest: (params: BatchBacktestRequest) =>
+    request<BatchBacktestResponse>("/api/backtest/batch", {
       method: "POST",
       body: JSON.stringify(params),
     }),

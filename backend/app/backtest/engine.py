@@ -219,9 +219,26 @@ class BacktestEngine:
     async def run(self, cfg: BacktestConfig) -> BacktestResult:
         end_time = datetime.now(tz=timezone.utc)
         start_time = end_time - timedelta(days=cfg.days)
-        # Pad the start with an extra window so bias/setup have enough
-        # warm-up bars when the strategy asks for ema_slow + margin.
-        fetch_start = start_time - timedelta(days=max(cfg.days // 4, 7))
+        # Pad the start with enough history for the strategy's slowest
+        # indicator to be "warm" by the time the reporting window starts.
+        #
+        # The old heuristic `max(days // 4, 7)` was WAY too small when the
+        # bias TF is 4h: EMA200 on 4h needs 200 × 4h = ~33 days of bars,
+        # so a 30-day backtest with only 7 days of warmup couldn't fire
+        # anything until day ~26 — leaving effectively 3-4 days of live
+        # signal window. That produced misleadingly small trade counts.
+        _bias_hours = _tf_to_hours(cfg.bias_tf)
+        _warmup_bars_needed = cfg.strategy_ctx.ema_slow + 20
+        _warmup_days_needed = int(_warmup_bars_needed * _bias_hours / 24) + 2
+        pad_days = max(cfg.days // 4, 7, _warmup_days_needed)
+        fetch_start = start_time - timedelta(days=pad_days)
+        log.info(
+            "backtest.warmup",
+            symbol=cfg.symbol,
+            bias_tf=cfg.bias_tf,
+            warmup_days=pad_days,
+            requested_days=cfg.days,
+        )
 
         start_ms = int(fetch_start.timestamp() * 1000)
         end_ms = int(end_time.timestamp() * 1000)
@@ -423,6 +440,20 @@ class BacktestEngine:
 # ==========================================================================
 # Paginated klines fetch
 # ==========================================================================
+
+
+def _tf_to_hours(tf: str) -> float:
+    """Convert a Binance timeframe string ("1m", "4h", "1d") to hours."""
+    tf = tf.strip().lower()
+    if tf.endswith("m"):
+        return int(tf[:-1]) / 60.0
+    if tf.endswith("h"):
+        return float(int(tf[:-1]))
+    if tf.endswith("d"):
+        return float(int(tf[:-1]) * 24)
+    if tf.endswith("w"):
+        return float(int(tf[:-1]) * 24 * 7)
+    return 1.0
 
 
 _KLINE_COLS = [

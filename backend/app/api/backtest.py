@@ -178,6 +178,152 @@ async def run_backtest(body: BacktestRequest) -> BacktestResponse:
     )
 
 
+# --------------------------------------------------------------------------
+# Batch endpoint — run the same backtest across multiple symbols in one
+# HTTP call so users don't have to click Run 10 times.
+# --------------------------------------------------------------------------
+
+
+class BatchBacktestRequest(BaseModel):
+    symbols: list[str] = Field(..., min_length=1, max_length=20)
+    bias_tf: str = "4h"
+    setup_tf: str = "1h"
+    entry_tf: str = "5m"
+    days: int = Field(60, ge=7, le=365)
+    initial_balance: float = Field(1000.0, ge=1.0, le=10_000_000)
+    risk_per_trade_pct: float = Field(1.0, ge=0.1, le=20.0)
+    leverage: int = Field(5, ge=1, le=125)
+    strategy_params: BacktestStrategyParams = Field(
+        default_factory=BacktestStrategyParams
+    )
+
+
+class BatchBacktestSummary(BaseModel):
+    symbol: str
+    total_trades: int = 0
+    win_rate_pct: float = 0.0
+    total_return_usdt: float = 0.0
+    total_return_pct: float = 0.0
+    profit_factor: float = 0.0
+    max_drawdown_pct: float = 0.0
+    avg_rr: float = 0.0
+    total_fees_usdt: float = 0.0
+    final_balance: float = 0.0
+    error: str | None = None
+
+
+class BatchBacktestResponse(BaseModel):
+    period_from: datetime | None
+    period_to: datetime | None
+    bias_tf: str
+    setup_tf: str
+    entry_tf: str
+    days: int
+    summaries: list[BatchBacktestSummary]
+
+
+@router.post("/batch", response_model=BatchBacktestResponse)
+async def run_batch(body: BatchBacktestRequest) -> BatchBacktestResponse:
+    """Run the same backtest config against several symbols sequentially.
+
+    Sequential (not parallel) on purpose: parallel fetches would swamp
+    Binance's per-IP rate limit and the engine is CPU-bound during the
+    replay loop anyway, so we'd end up starving each other. Users see
+    aggregated results only — no per-symbol trade lists — to keep the
+    response payload small.
+    """
+    for tf_name, tf_val in (
+        ("bias_tf", body.bias_tf),
+        ("setup_tf", body.setup_tf),
+        ("entry_tf", body.entry_tf),
+    ):
+        if tf_val not in VALID_TIMEFRAMES:
+            raise HTTPException(400, f"invalid {tf_name}: {tf_val}")
+
+    ctx = StrategyContext(
+        ema_fast=body.strategy_params.ema_fast,
+        ema_slow=body.strategy_params.ema_slow,
+        ema_trigger=body.strategy_params.ema_trigger,
+        rsi_period=body.strategy_params.rsi_period,
+        rsi_long_max=body.strategy_params.rsi_long_max,
+        rsi_short_min=body.strategy_params.rsi_short_min,
+        atr_period=body.strategy_params.atr_period,
+        atr_sl_mult=body.strategy_params.atr_sl_mult,
+        rr_tp1=body.strategy_params.rr_tp1,
+        rr_tp2=body.strategy_params.rr_tp2,
+    )
+
+    engine = BacktestEngine()
+    summaries: list[BatchBacktestSummary] = []
+    period_from: datetime | None = None
+    period_to: datetime | None = None
+
+    # Dedup & clean the symbol list up front.
+    clean_symbols: list[str] = []
+    for s in body.symbols:
+        s2 = s.strip().upper()
+        if s2 and s2 not in clean_symbols:
+            clean_symbols.append(s2)
+
+    log.info(
+        "backtest.batch.start",
+        n_symbols=len(clean_symbols),
+        days=body.days,
+        entry_tf=body.entry_tf,
+    )
+
+    for idx, sym in enumerate(clean_symbols):
+        log.info("backtest.batch.symbol", i=idx + 1, total=len(clean_symbols), symbol=sym)
+        cfg = BacktestConfig(
+            symbol=sym,
+            bias_tf=body.bias_tf,
+            setup_tf=body.setup_tf,
+            entry_tf=body.entry_tf,
+            days=body.days,
+            initial_balance=body.initial_balance,
+            risk_per_trade_pct=body.risk_per_trade_pct,
+            leverage=body.leverage,
+            strategy_ctx=ctx,
+        )
+        try:
+            result = await engine.run(cfg)
+            metrics = compute_metrics(result)
+            if period_from is None:
+                period_from = result.period_from
+                period_to = result.period_to
+            summaries.append(
+                BatchBacktestSummary(
+                    symbol=sym,
+                    total_trades=metrics.total_trades,
+                    win_rate_pct=metrics.win_rate_pct,
+                    total_return_usdt=metrics.total_return_usdt,
+                    total_return_pct=metrics.total_return_pct,
+                    profit_factor=metrics.profit_factor,
+                    max_drawdown_pct=metrics.max_drawdown_pct,
+                    avg_rr=metrics.avg_rr,
+                    total_fees_usdt=metrics.total_fees_usdt,
+                    final_balance=metrics.final_balance,
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception(
+                "backtest.batch.symbol_failed", symbol=sym, error=str(e)
+            )
+            summaries.append(
+                BatchBacktestSummary(symbol=sym, error=f"{type(e).__name__}: {e}")
+            )
+
+    return BatchBacktestResponse(
+        period_from=period_from,
+        period_to=period_to,
+        bias_tf=body.bias_tf,
+        setup_tf=body.setup_tf,
+        entry_tf=body.entry_tf,
+        days=body.days,
+        summaries=summaries,
+    )
+
+
 def _trade_out(t: SimTrade) -> TradeOut:
     return TradeOut(
         open_time=t.open_time,

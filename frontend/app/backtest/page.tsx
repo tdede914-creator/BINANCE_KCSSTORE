@@ -8,6 +8,9 @@ import type {
   BacktestRequest,
   BacktestResponse,
   BacktestTrade,
+  BatchBacktestRequest,
+  BatchBacktestResponse,
+  BatchBacktestSummary,
 } from "@/lib/api";
 import { formatUsdt } from "@/lib/format";
 import { StatCard } from "@/components/StatCard";
@@ -45,10 +48,17 @@ const runtimeHintFor = (tf: string, days: number): string => {
 export default function BacktestPage() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<BacktestResponse | null>(null);
+  const [batchResult, setBatchResult] = useState<BatchBacktestResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Mode: single symbol vs batch (comma / newline-separated list).
+  const [mode, setMode] = useState<"single" | "batch">("single");
 
   // Form state — sensible defaults for a first-run experiment.
   const [symbol, setSymbol] = useState("BTCUSDT");
+  const [symbolsText, setSymbolsText] = useState(
+    "BTCUSDT\nETHUSDT\nSOLUSDT\nBNBUSDT\nXRPUSDT\nDOGEUSDT\nADAUSDT\nAVAXUSDT\nLINKUSDT\n1000PEPEUSDT",
+  );
   const [biasTf, setBiasTf] = useState("4h");
   const [setupTf, setSetupTf] = useState("1h");
   const [entryTf, setEntryTf] = useState("15m");
@@ -57,23 +67,55 @@ export default function BacktestPage() {
   const [riskPct, setRiskPct] = useState(1.0);
   const [leverage, setLeverage] = useState(5);
 
+  const parsedSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          symbolsText
+            .split(/[\s,]+/)
+            .map((s) => s.trim().toUpperCase())
+            .filter(Boolean),
+        ),
+      ).slice(0, 20),
+    [symbolsText],
+  );
+
   const run = async () => {
     setRunning(true);
     setError(null);
     setResult(null);
+    setBatchResult(null);
     try {
-      const req: BacktestRequest = {
-        symbol: symbol.toUpperCase(),
-        bias_tf: biasTf,
-        setup_tf: setupTf,
-        entry_tf: entryTf,
-        days,
-        initial_balance: initialBalance,
-        risk_per_trade_pct: riskPct,
-        leverage,
-      };
-      const resp = await api.runBacktest(req);
-      setResult(resp);
+      if (mode === "batch") {
+        if (parsedSymbols.length === 0) {
+          throw new Error("Batch symbols list is empty.");
+        }
+        const req: BatchBacktestRequest = {
+          symbols: parsedSymbols,
+          bias_tf: biasTf,
+          setup_tf: setupTf,
+          entry_tf: entryTf,
+          days,
+          initial_balance: initialBalance,
+          risk_per_trade_pct: riskPct,
+          leverage,
+        };
+        const resp = await api.runBatchBacktest(req);
+        setBatchResult(resp);
+      } else {
+        const req: BacktestRequest = {
+          symbol: symbol.toUpperCase(),
+          bias_tf: biasTf,
+          setup_tf: setupTf,
+          entry_tf: entryTf,
+          days,
+          initial_balance: initialBalance,
+          risk_per_trade_pct: riskPct,
+          leverage,
+        };
+        const resp = await api.runBacktest(req);
+        setResult(resp);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -92,19 +134,67 @@ export default function BacktestPage() {
         </p>
       </div>
 
+      {/* Mode toggle */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setMode("single")}
+          disabled={running}
+          className={clsx(
+            "px-3 py-1.5 rounded text-xs font-semibold border",
+            mode === "single"
+              ? "bg-long/20 border-long/50 text-long"
+              : "bg-bg-soft border-border text-muted hover:text-white",
+          )}
+        >
+          Single symbol
+        </button>
+        <button
+          onClick={() => setMode("batch")}
+          disabled={running}
+          className={clsx(
+            "px-3 py-1.5 rounded text-xs font-semibold border",
+            mode === "batch"
+              ? "bg-long/20 border-long/50 text-long"
+              : "bg-bg-soft border-border text-muted hover:text-white",
+          )}
+        >
+          Compare many
+        </button>
+        {mode === "batch" && (
+          <span className="text-xs text-muted">
+            · {parsedSymbols.length} symbol{parsedSymbols.length === 1 ? "" : "s"} queued (max 20)
+          </span>
+        )}
+      </div>
+
       {/* Form */}
       <section className="bg-bg-card border border-border rounded-lg p-5 space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <Field label="Symbol">
-            <input
-              type="text"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              disabled={running}
-              className="bg-bg-soft border border-border rounded px-3 py-2 text-sm font-mono w-full"
-              placeholder="BTCUSDT"
-            />
-          </Field>
+          {mode === "single" ? (
+            <Field label="Symbol">
+              <input
+                type="text"
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                disabled={running}
+                className="bg-bg-soft border border-border rounded px-3 py-2 text-sm font-mono w-full"
+                placeholder="BTCUSDT"
+              />
+            </Field>
+          ) : (
+            <div className="col-span-2 md:col-span-1 row-span-3">
+              <Field label={`Symbols (one per line, max 20) — ${parsedSymbols.length} queued`}>
+                <textarea
+                  value={symbolsText}
+                  onChange={(e) => setSymbolsText(e.target.value)}
+                  disabled={running}
+                  rows={9}
+                  className="bg-bg-soft border border-border rounded px-3 py-2 text-sm font-mono w-full resize-y"
+                  placeholder="BTCUSDT&#10;ETHUSDT&#10;SOLUSDT"
+                />
+              </Field>
+            </div>
+          )}
           <Field label="Days back">
             <select
               value={days}
@@ -164,27 +254,46 @@ export default function BacktestPage() {
         </div>
 
         <div className="flex flex-col gap-2 pt-2 border-t border-border/50">
-          {runtimeSecondsFor(entryTf, days) > 90 && !running && (
-            <div className="text-xs text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 rounded px-3 py-2">
-              ⚠️ Estimated runtime is ~
-              {runtimeHintFor(entryTf, days)} — heavy but doable.
-              Tip: try Entry TF 15m or 1h for a faster first-pass; drop to
-              5m only when tuning promising setups.
-            </div>
-          )}
+          {(() => {
+            const perSymSec = runtimeSecondsFor(entryTf, days);
+            const totalSec =
+              mode === "batch" ? perSymSec * Math.max(1, parsedSymbols.length) : perSymSec;
+            const hint =
+              totalSec < 60
+                ? `~${totalSec}s`
+                : `~${(totalSec / 60).toFixed(1)}m`;
+            if (totalSec <= 90) return null;
+            return (
+              <div className="text-xs text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 rounded px-3 py-2">
+                Estimated runtime {hint}
+                {mode === "batch" &&
+                  ` (${parsedSymbols.length} × ${runtimeHintFor(entryTf, days)})`}
+                . Heavy but doable. Tip: try Entry TF 15m or 1h for a
+                faster first-pass; drop to 5m only when tuning promising
+                setups.
+              </div>
+            );
+          })()}
           <div className="flex items-center gap-3">
             <button
               onClick={run}
-              disabled={running || !symbol}
+              disabled={
+                running ||
+                (mode === "single" ? !symbol : parsedSymbols.length === 0)
+              }
               className="px-4 py-2 bg-long/20 hover:bg-long/30 text-long border border-long/40 rounded text-sm font-semibold disabled:opacity-50"
             >
-              {running ? "Running…" : "Run backtest"}
+              {running
+                ? "Running…"
+                : mode === "batch"
+                  ? `Run batch (${parsedSymbols.length})`
+                  : "Run backtest"}
             </button>
             {running && (
               <span className="text-xs text-muted animate-pulse">
-                Fetching klines, precomputing indicators, replaying the
-                strategy… Backend logs 'backtest.progress' every 500 bars if
-                you want to watch it.
+                {mode === "batch"
+                  ? "Running each symbol sequentially… watch backend logs for backtest.batch.symbol."
+                  : "Fetching klines, precomputing indicators, replaying the strategy… Backend logs backtest.progress every 500 bars."}
               </span>
             )}
           </div>
@@ -198,7 +307,208 @@ export default function BacktestPage() {
       )}
 
       {result && <BacktestResults result={result} />}
+      {batchResult && <BatchResults result={batchResult} />}
     </div>
+  );
+}
+
+/* ================================================================== */
+/*  Batch results                                                      */
+/* ================================================================== */
+
+type SortKey =
+  | "symbol"
+  | "total_trades"
+  | "win_rate_pct"
+  | "total_return_pct"
+  | "profit_factor"
+  | "max_drawdown_pct"
+  | "avg_rr"
+  | "total_fees_usdt";
+
+function BatchResults({ result }: { result: BatchBacktestResponse }) {
+  const [sortKey, setSortKey] = useState<SortKey>("total_return_pct");
+  const [asc, setAsc] = useState(false);
+
+  const sorted = useMemo(() => {
+    const arr = result.summaries.slice();
+    arr.sort((a, b) => {
+      const av = a[sortKey] as number | string;
+      const bv = b[sortKey] as number | string;
+      if (typeof av === "number" && typeof bv === "number") {
+        return asc ? av - bv : bv - av;
+      }
+      return asc
+        ? String(av).localeCompare(String(bv))
+        : String(bv).localeCompare(String(av));
+    });
+    return arr;
+  }, [result.summaries, sortKey, asc]);
+
+  const clickHeader = (k: SortKey) => {
+    if (k === sortKey) setAsc((v) => !v);
+    else {
+      setSortKey(k);
+      setAsc(false); // desc by default (biggest return first, biggest DD first, etc)
+    }
+  };
+
+  const valid = sorted.filter((s) => !s.error);
+  const winners = valid.filter((s) => s.total_return_usdt > 0);
+  const losers = valid.filter((s) => s.total_return_usdt <= 0);
+  const avgReturn =
+    valid.length > 0
+      ? valid.reduce((a, s) => a + s.total_return_pct, 0) / valid.length
+      : 0;
+
+  return (
+    <div className="space-y-4">
+      {result.period_from && result.period_to && (
+        <div className="text-xs text-muted font-mono">
+          {result.days} days · {result.entry_tf} entry ·{" "}
+          {new Date(result.period_from).toLocaleDateString()} →{" "}
+          {new Date(result.period_to).toLocaleDateString()}
+        </div>
+      )}
+
+      {/* High-level roll-up */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard
+          label="Symbols tested"
+          value={result.summaries.length}
+          hint={`${valid.length} ok · ${result.summaries.length - valid.length} failed`}
+        />
+        <StatCard
+          label="Profitable pairs"
+          value={`${winners.length} / ${valid.length}`}
+          hint={winners.map((w) => w.symbol).slice(0, 3).join(", ") || "—"}
+          className="border-long/40 text-long"
+        />
+        <StatCard
+          label="Losing pairs"
+          value={`${losers.length} / ${valid.length}`}
+          hint={losers.map((w) => w.symbol).slice(0, 3).join(", ") || "—"}
+          className="border-short/40 text-short"
+        />
+        <StatCard
+          label="Avg return / pair"
+          value={`${avgReturn >= 0 ? "+" : ""}${avgReturn.toFixed(2)}%`}
+          hint="Simple mean — assumes equal allocation"
+          className={
+            avgReturn >= 0
+              ? "border-long/40 text-long"
+              : "border-short/40 text-short"
+          }
+        />
+      </div>
+
+      {/* Comparison table */}
+      <section className="bg-bg-card border border-border rounded-lg overflow-x-auto">
+        <div className="p-4 border-b border-border">
+          <h2 className="text-lg font-semibold">Comparison</h2>
+          <p className="text-xs text-muted mt-1">
+            Click column headers to sort. Sorted by {sortKey} {asc ? "asc" : "desc"}.
+          </p>
+        </div>
+        <table className="w-full text-sm">
+          <thead className="text-xs text-muted uppercase">
+            <tr className="border-b border-border">
+              <Th k="symbol" active={sortKey} asc={asc} onClick={clickHeader}>Symbol</Th>
+              <Th k="total_trades" active={sortKey} asc={asc} onClick={clickHeader} align="right">Trades</Th>
+              <Th k="win_rate_pct" active={sortKey} asc={asc} onClick={clickHeader} align="right">Win %</Th>
+              <Th k="total_return_pct" active={sortKey} asc={asc} onClick={clickHeader} align="right">Return</Th>
+              <Th k="profit_factor" active={sortKey} asc={asc} onClick={clickHeader} align="right">PF</Th>
+              <Th k="max_drawdown_pct" active={sortKey} asc={asc} onClick={clickHeader} align="right">Max DD</Th>
+              <Th k="avg_rr" active={sortKey} asc={asc} onClick={clickHeader} align="right">Avg RR</Th>
+              <Th k="total_fees_usdt" active={sortKey} asc={asc} onClick={clickHeader} align="right">Fees</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((s) => (
+              <BatchRow key={s.symbol} s={s} />
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+function Th({
+  k,
+  active,
+  asc,
+  onClick,
+  align,
+  children,
+}: {
+  k: SortKey;
+  active: SortKey;
+  asc: boolean;
+  onClick: (k: SortKey) => void;
+  align?: "left" | "right";
+  children: React.ReactNode;
+}) {
+  const isActive = k === active;
+  return (
+    <th
+      onClick={() => onClick(k)}
+      className={clsx(
+        "py-2 px-3 cursor-pointer select-none hover:text-white transition-colors",
+        align === "right" ? "text-right" : "text-left",
+        isActive && "text-white",
+      )}
+    >
+      {children}
+      {isActive && <span className="ml-1 text-[10px]">{asc ? "▲" : "▼"}</span>}
+    </th>
+  );
+}
+
+function BatchRow({ s }: { s: BatchBacktestSummary }) {
+  if (s.error) {
+    return (
+      <tr className="border-b border-border/50">
+        <td className="py-2 px-3 font-mono text-xs">{s.symbol}</td>
+        <td colSpan={7} className="py-2 px-3 text-xs text-short">
+          error: {s.error}
+        </td>
+      </tr>
+    );
+  }
+  const pos = s.total_return_usdt >= 0;
+  return (
+    <tr className="border-b border-border/50 hover:bg-bg-soft/50">
+      <td className="py-2 px-3 font-mono text-xs">{s.symbol}</td>
+      <td className="py-2 px-3 text-xs text-right font-mono">{s.total_trades}</td>
+      <td className="py-2 px-3 text-xs text-right font-mono">
+        {s.win_rate_pct.toFixed(1)}%
+      </td>
+      <td
+        className={clsx(
+          "py-2 px-3 text-xs text-right font-mono",
+          pos ? "text-long" : "text-short",
+        )}
+      >
+        {pos ? "+" : ""}
+        {s.total_return_pct.toFixed(2)}%
+        <span className="ml-1 text-muted text-[10px]">
+          ({pos ? "+" : ""}${s.total_return_usdt.toFixed(2)})
+        </span>
+      </td>
+      <td className="py-2 px-3 text-xs text-right font-mono">
+        {s.profit_factor.toFixed(2)}
+      </td>
+      <td className="py-2 px-3 text-xs text-right font-mono text-yellow-300/80">
+        {s.max_drawdown_pct.toFixed(2)}%
+      </td>
+      <td className="py-2 px-3 text-xs text-right font-mono">
+        {s.avg_rr.toFixed(2)}
+      </td>
+      <td className="py-2 px-3 text-xs text-right font-mono text-muted">
+        ${s.total_fees_usdt.toFixed(2)}
+      </td>
+    </tr>
   );
 }
 
