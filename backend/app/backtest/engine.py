@@ -266,17 +266,17 @@ class BacktestEngine:
         bias_df = _enrich_indicators(
             bias_df,
             ema_fast=s.ema_fast, ema_slow=s.ema_slow, ema_trigger=s.ema_trigger,
-            rsi_period=s.rsi_period, atr_period=s.atr_period,
+            rsi_period=s.rsi_period, atr_period=s.atr_period, adx_period=s.adx_period,
         )
         setup_df = _enrich_indicators(
             setup_df,
             ema_fast=s.ema_fast, ema_slow=s.ema_slow, ema_trigger=s.ema_trigger,
-            rsi_period=s.rsi_period, atr_period=s.atr_period,
+            rsi_period=s.rsi_period, atr_period=s.atr_period, adx_period=s.adx_period,
         )
         entry_df = _enrich_indicators(
             entry_df,
             ema_fast=s.ema_fast, ema_slow=s.ema_slow, ema_trigger=s.ema_trigger,
-            rsi_period=s.rsi_period, atr_period=s.atr_period,
+            rsi_period=s.rsi_period, atr_period=s.atr_period, adx_period=s.adx_period,
         )
         log.info("backtest.indicators_precomputed", symbol=cfg.symbol)
 

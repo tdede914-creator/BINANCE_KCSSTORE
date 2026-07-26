@@ -32,13 +32,62 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+# --------------------------------------------------------------------------
+# Lightweight in-place schema evolution.
+#
+# We don't run Alembic in this project (yet) — instead of writing full
+# migrations for every additive column, ``init_db`` also runs a small
+# ``ADD COLUMN IF NOT EXISTS`` step after ``create_all``. That covers
+# the 95% case (adding a new tunable to UserConfig) without breaking
+# existing deployments that already have data.
+#
+# Both Postgres 9.6+ and SQLite 3.35+ support ``ADD COLUMN IF NOT EXISTS``,
+# but SQLite's syntax lacks the ``IF NOT EXISTS`` keyword; we fall back
+# to inspecting the current columns and skipping the ALTER when the
+# column already exists, which works on both dialects.
+# --------------------------------------------------------------------------
+
+# (table_name, column_name, ddl_type_and_default)
+_ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("user_config", "adx_period", "INTEGER NOT NULL DEFAULT 14"),
+    ("user_config", "adx_min", "DOUBLE PRECISION NOT NULL DEFAULT 20.0"),
+    ("user_config", "volume_mult", "DOUBLE PRECISION NOT NULL DEFAULT 1.2"),
+)
+
+
+def _apply_additive_columns_sync(sync_conn) -> None:
+    """Run ADD COLUMN for any columns present in the model but absent in DB."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(sync_conn)
+    dialect = sync_conn.dialect.name  # "postgresql", "sqlite", ...
+
+    for table, column, ddl in _ADDITIVE_COLUMNS:
+        # Skip if the table itself doesn't exist yet (fresh DB — create_all
+        # will handle everything).
+        if not inspector.has_table(table):
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table)}
+        if column in existing:
+            continue
+
+        # SQLite doesn't support DOUBLE PRECISION — normalize.
+        col_ddl = ddl
+        if dialect == "sqlite":
+            col_ddl = col_ddl.replace("DOUBLE PRECISION", "REAL")
+
+        log.info("db.migrate.add_column", table=table, column=column)
+        sync_conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_ddl}"))
+
+
 async def init_db() -> None:
-    """Create tables if they don't exist. Called once at app startup."""
+    """Create tables if they don't exist and apply any additive column migrations."""
     # Import models so SQLModel.metadata knows about them.
     from app.db import models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(_apply_additive_columns_sync)
     log.info("db.initialized", url=settings.DATABASE_URL.split("@")[-1])
 
 

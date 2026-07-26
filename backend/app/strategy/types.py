@@ -54,3 +54,14 @@ class StrategyContext:
     rr_tp1: float = 2.0
     rr_tp2: float = 3.0
     setup_max_atr_distance: float = 1.5  # price must be within N × ATR of setup zone
+
+    # Regime filter — reject signals when the market is ranging.
+    # ADX below ``adx_min`` (Wilder default 20) means no trend, and
+    # trend-following signals fail there. Set adx_min=0 to disable.
+    adx_period: int = 14
+    adx_min: float = 20.0
+
+    # Volume confirmation — require the entry candle's volume to exceed
+    # ``volume_mult`` × its 20-period average. 1.0 = must beat average,
+    # 1.5 = spike required, 0 = disable.
+    volume_mult: float = 1.2

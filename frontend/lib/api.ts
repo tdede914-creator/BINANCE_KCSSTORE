@@ -81,6 +81,9 @@ export interface ScannerDiagnostics {
 export interface BacktestStrategyParams {
   ema_fast?: number;
   ema_slow?: number;
+  adx_period?: number;
+  adx_min?: number;
+  volume_mult?: number;
   ema_trigger?: number;
   rsi_period?: number;
   rsi_long_max?: number;

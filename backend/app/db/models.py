@@ -153,6 +153,16 @@ class UserConfig(SQLModel, table=True):
     rr_tp1: float = Field(default=2.0)
     rr_tp2: float = Field(default=3.0)
 
+    # ADX-based regime filter (skip trend signals in ranging markets).
+    # Default: reject entries when ADX < 20 (Wilder-typical threshold).
+    # Set adx_min = 0 to disable.
+    adx_period: int = Field(default=14)
+    adx_min: float = Field(default=20.0)
+
+    # Volume confirmation: entry candle volume must be >= volume_mult
+    # times its 20-bar moving average. 0 disables the check.
+    volume_mult: float = Field(default=1.2)
+
     # Trailing stop
     trailing_mode: TrailingMode = Field(default=TrailingMode.OFF)
     # RR (in units of initial risk) that price must move in favor before

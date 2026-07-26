@@ -587,6 +587,51 @@ export default function SettingsPage() {
           </Field>
         </div>
       </Section>
+
+      {/* Regime / volume filters */}
+      <Section
+        title="Regime & volume filters"
+        hint="Skip signals in ranging markets or on candles without volume conviction. Set ADX min or Volume mult to 0 to disable that filter."
+      >
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <Field
+            label="ADX period"
+            hint="14 = Wilder default; longer = smoother, slower to react"
+          >
+            <NumberInput
+              value={cfg.adx_period}
+              onCommit={(v) => patch({ adx_period: v })}
+              step={1}
+              min={2}
+              max={100}
+            />
+          </Field>
+          <Field
+            label="ADX min (trend strength)"
+            hint="20 = classic no-chop threshold; try 25 to be stricter; 0 to disable"
+          >
+            <NumberInput
+              value={cfg.adx_min}
+              onCommit={(v) => patch({ adx_min: v })}
+              step={1}
+              min={0}
+              max={60}
+            />
+          </Field>
+          <Field
+            label="Volume multiplier"
+            hint="Entry volume ≥ mult × MA20. 1.2 = mild filter, 1.5 = spike required, 0 = disable"
+          >
+            <NumberInput
+              value={cfg.volume_mult}
+              onCommit={(v) => patch({ volume_mult: v })}
+              step={0.1}
+              min={0}
+              max={5}
+            />
+          </Field>
+        </div>
+      </Section>
     </div>
   );
 }

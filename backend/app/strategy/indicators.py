@@ -62,6 +62,57 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
 
 
+def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Average Directional Index (Wilder, 1978).
+
+    ADX measures *trend strength* independent of direction. A common
+    heuristic among trend-following systems:
+
+        ADX < 20   → market is ranging / choppy → skip trend trades
+        ADX 20-40  → trend present, tradeable
+        ADX > 40   → very strong trend (but often already exhausted)
+
+    Implementation follows Wilder's original: TR + directional movement
+    are smoothed via RMA (equivalent to EMA with alpha=1/period), then
+    DI+/DI- computed, then DX, then ADX = smoothed DX.
+    """
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+    prev_close = close.shift(1)
+
+    # True range (same as atr() but we need the series here)
+    tr = pd.concat(
+        [
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    # Directional movement
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = pd.Series(
+        np.where((up_move > down_move) & (up_move > 0), up_move, 0.0),
+        index=df.index,
+    )
+    minus_dm = pd.Series(
+        np.where((down_move > up_move) & (down_move > 0), down_move, 0.0),
+        index=df.index,
+    )
+
+    alpha = 1.0 / period
+    atr_s = tr.ewm(alpha=alpha, adjust=False, min_periods=period).mean()
+    plus_di = 100.0 * plus_dm.ewm(alpha=alpha, adjust=False, min_periods=period).mean() / atr_s
+    minus_di = 100.0 * minus_dm.ewm(alpha=alpha, adjust=False, min_periods=period).mean() / atr_s
+
+    dx = (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan) * 100.0
+    adx_s = dx.ewm(alpha=alpha, adjust=False, min_periods=period).mean()
+    return adx_s.fillna(0.0)
+
+
 # ==========================================================================
 # Structure detection
 # ==========================================================================
@@ -240,7 +291,7 @@ def volume_ma(series: pd.Series, period: int = 20) -> pd.Series:
 # ==========================================================================
 
 
-_ENRICH_COLUMNS = ("ema_fast", "ema_slow", "ema_trigger", "rsi", "atr", "vol_ma")
+_ENRICH_COLUMNS = ("ema_fast", "ema_slow", "ema_trigger", "rsi", "atr", "adx", "vol_ma")
 
 
 def enrich(
@@ -251,11 +302,12 @@ def enrich(
     ema_trigger: int = 20,
     rsi_period: int = 14,
     atr_period: int = 14,
+    adx_period: int = 14,
 ) -> pd.DataFrame:
     """Return a copy of ``df`` with indicator columns added.
 
     Columns added:
-        ema_fast, ema_slow, ema_trigger, rsi, atr, vol_ma
+        ema_fast, ema_slow, ema_trigger, rsi, atr, adx, vol_ma
 
     Fast path: if ``df`` already has ALL indicator columns (e.g. because
     the backtest engine pre-enriched it once and then sliced), we
@@ -271,5 +323,6 @@ def enrich(
     out["ema_trigger"] = ema(out["close"], ema_trigger)
     out["rsi"] = rsi(out["close"], rsi_period)
     out["atr"] = atr(out, atr_period)
+    out["adx"] = adx(out, adx_period)
     out["vol_ma"] = volume_ma(out["volume"], 20)
     return out

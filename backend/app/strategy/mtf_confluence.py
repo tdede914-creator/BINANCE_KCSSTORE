@@ -15,7 +15,12 @@ Logic
    - Break of Structure (BOS) in the bias direction, or
    - Retest of EMA(trigger) with a bullish/bearish reaction candle
    - RSI is not at an extreme
-   - Volume of trigger candle > MA(volume)
+   - **ADX regime filter**: ADX >= ``adx_min`` (default 20). Below that,
+     the market is ranging and trend signals fail. Set adx_min=0 to
+     disable.
+   - **Volume confirmation**: entry-candle volume >=
+     ``volume_mult × MA(volume, 20)``. Default multiplier 1.2 rejects
+     moves that lack participation. Set volume_mult=0 to disable.
 
 4. **Suggested SL** — last swing (opposite direction) ± ``atr_sl_mult × ATR``.
 5. **Suggested TP** — RR ratios based on that SL.
@@ -154,6 +159,7 @@ class MTFConfluenceStrategy:
             ema_trigger=self.ctx.ema_trigger,
             rsi_period=self.ctx.rsi_period,
             atr_period=self.ctx.atr_period,
+            adx_period=self.ctx.adx_period,
         )
         last = enriched.iloc[-1]
         ema_f = last["ema_fast"]
@@ -197,6 +203,7 @@ class MTFConfluenceStrategy:
             ema_trigger=self.ctx.ema_trigger,
             rsi_period=self.ctx.rsi_period,
             atr_period=self.ctx.atr_period,
+            adx_period=self.ctx.adx_period,
         )
         last = enriched.iloc[-1]
         atr_val = last["atr"]
@@ -279,6 +286,7 @@ class MTFConfluenceStrategy:
             ema_trigger=self.ctx.ema_trigger,
             rsi_period=self.ctx.rsi_period,
             atr_period=self.ctx.atr_period,
+            adx_period=self.ctx.adx_period,
         )
         last = enriched.iloc[-1]
         prev = enriched.iloc[-2]
@@ -286,6 +294,7 @@ class MTFConfluenceStrategy:
         close = float(last["close"])
         atr_val = float(last["atr"])
         rsi_val = float(last["rsi"])
+        adx_val = float(last["adx"]) if not pd.isna(last["adx"]) else 0.0
         vol = float(last["volume"])
         vol_ma = float(last["vol_ma"])
         ema_trig = float(last["ema_trigger"])
@@ -294,6 +303,7 @@ class MTFConfluenceStrategy:
             "close": close,
             "rsi": rsi_val,
             "atr": atr_val,
+            "adx": adx_val,
             "volume": vol,
             "vol_ma": vol_ma,
             "ema_trigger": ema_trig,
@@ -315,8 +325,22 @@ class MTFConfluenceStrategy:
             diag["reason"] = f"RSI too low ({rsi_val:.1f})"
             return False, 0, 0, 0, 0, diag
 
-        # ------------ Volume filter (light) ------------
-        vol_ok = vol >= vol_ma * 0.8  # not far below MA
+        # ------------ ADX regime filter ------------
+        # ADX measures trend strength. Below the minimum threshold the
+        # market is ranging and trend-following signals fail badly
+        # (choppy MEAN 40-50% of losing trades in our earlier backtests).
+        # A zero threshold effectively disables the check so we can
+        # A/B test with and without it.
+        if self.ctx.adx_min > 0 and adx_val < self.ctx.adx_min:
+            diag["reason"] = f"ADX too low ({adx_val:.1f} < {self.ctx.adx_min:.1f}) — sideways market"
+            return False, 0, 0, 0, 0, diag
+
+        # ------------ Volume confirmation ------------
+        # Require the entry candle's volume to exceed a multiple of its
+        # 20-bar average. A move without volume is usually a fake.
+        vol_ok = True
+        if self.ctx.volume_mult > 0 and vol_ma > 0:
+            vol_ok = vol >= vol_ma * self.ctx.volume_mult
 
         # ------------ Trigger detection ------------
         bos_ok = False
@@ -389,22 +413,40 @@ class MTFConfluenceStrategy:
     # ------------------------------------------------------------------
 
     def _score_confidence(self, bias_d: dict, setup_d: dict, trig_d: dict) -> float:
-        score = 0.4  # baseline for passing all three gates
+        score = 0.35  # baseline for passing all three gates
 
         sep = bias_d.get("separation_pct", 0.0) or 0.0
-        score += min(sep / 3.0, 0.2)  # up to +0.2 for strong EMA separation
+        score += min(sep / 3.0, 0.15)  # up to +0.15 for strong EMA separation
 
         if setup_d.get("nearest_zone") and setup_d.get("nearest_ob"):
-            score += 0.15
+            score += 0.12
         elif setup_d.get("nearest_zone") or setup_d.get("nearest_ob"):
-            score += 0.08
+            score += 0.06
 
         if trig_d.get("bos") and trig_d.get("retest"):
-            score += 0.15
+            score += 0.12
         elif trig_d.get("bos") or trig_d.get("retest"):
-            score += 0.08
+            score += 0.06
 
-        if trig_d.get("volume_ok"):
+        # ADX contribution — strong trend increases confidence
+        adx_v = trig_d.get("adx", 0.0) or 0.0
+        if adx_v >= 40:
+            score += 0.15
+        elif adx_v >= 25:
+            score += 0.10
+        elif adx_v >= 20:
             score += 0.05
+
+        # Volume spike contribution — outsized volume = conviction
+        vol = trig_d.get("volume", 0.0) or 0.0
+        vol_ma = trig_d.get("vol_ma", 0.0) or 0.0
+        if vol_ma > 0:
+            spike_ratio = vol / vol_ma
+            if spike_ratio >= 2.0:
+                score += 0.10
+            elif spike_ratio >= 1.5:
+                score += 0.06
+            elif spike_ratio >= 1.2:
+                score += 0.03
 
         return round(min(max(score, 0.0), 1.0), 3)

@@ -432,6 +432,9 @@ class ScannerEngine:
             atr_sl_mult=cfg.atr_sl_mult,
             rr_tp1=cfg.rr_tp1,
             rr_tp2=cfg.rr_tp2,
+            adx_period=cfg.adx_period,
+            adx_min=cfg.adx_min,
+            volume_mult=cfg.volume_mult,
         )
 
     def _executor_for(self, cfg: UserConfig) -> BaseExecutor:

@@ -42,6 +42,10 @@ export interface Config {
   atr_sl_mult: number;
   rr_tp1: number;
   rr_tp2: number;
+  // Regime + volume filters
+  adx_period: number;
+  adx_min: number;
+  volume_mult: number;
   // Trailing stop
   trailing_mode: TrailingMode;
   trailing_activation_rr: number;
