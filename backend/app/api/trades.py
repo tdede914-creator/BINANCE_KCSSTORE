@@ -227,26 +227,38 @@ async def close_trade(trade_id: int, session: SessionDep) -> TradeOut:
 def _paper_close_inline(trade: Trade, exit_price: float) -> None:
     """Mutate ``trade`` in-place to reflect a manual paper close.
 
-    Uses the same fee (0.05% per side) and P&L math as
-    ``PaperExecutor.close_trade`` so histories stay consistent, but does
-    not open a new database session — the caller is expected to commit.
+    Mirrors ``PaperExecutor.close_trade`` fee math so histories stay
+    consistent:
+      - remaining qty depends on status (half if TP1_HIT, else full)
+      - net leg P&L = gross_pnl − entry_fee_share − exit_fee
+      - realised P&L accumulates (adds to any TP1 partial already booked)
+      - realised P&L % = final realised P&L / initial margin
     """
+    remaining_qty = (
+        trade.quantity / 2.0
+        if trade.status == SignalStatus.TP1_HIT
+        else trade.quantity
+    )
     side_val = trade.side.value if hasattr(trade.side, "value") else str(trade.side)
     if side_val == "LONG":
         move = exit_price - trade.entry_price
     else:
         move = trade.entry_price - exit_price
 
-    pnl_usdt = move * trade.quantity
-    exit_fee = exit_price * trade.quantity * _PAPER_FEE_RATE
-    realized = pnl_usdt - exit_fee
-    margin = (trade.entry_price * trade.quantity) / max(trade.leverage, 1)
-    pnl_pct = pnl_usdt / max(margin, 1e-9) * 100.0
+    gross_leg = move * remaining_qty
+    entry_fee_share = trade.entry_price * remaining_qty * _PAPER_FEE_RATE
+    exit_fee = exit_price * remaining_qty * _PAPER_FEE_RATE
+    net_leg = gross_leg - entry_fee_share - exit_fee
 
+    prev_realized = trade.realized_pnl_usdt or 0.0
     trade.exit_price = exit_price
-    trade.realized_pnl_usdt = round(realized, 4)
-    trade.realized_pnl_pct = round(pnl_pct, 4)
+    trade.realized_pnl_usdt = round(prev_realized + net_leg, 4)
     trade.fee_usdt = round((trade.fee_usdt or 0.0) + exit_fee, 4)
+
+    margin = (trade.entry_price * trade.quantity) / max(trade.leverage, 1)
+    trade.realized_pnl_pct = round(
+        (trade.realized_pnl_usdt / max(margin, 1e-9)) * 100.0, 4
+    )
     trade.closed_at = datetime.now(tz=timezone.utc)
     trade.notes = "manual close via API"
     trade.status = SignalStatus.CLOSED_MANUAL

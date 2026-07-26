@@ -120,24 +120,40 @@ class PaperExecutor(BaseExecutor):
         current_price: float,
         reason: str = "manual",
     ) -> ExecutionResult:
-        pnl_usdt, pnl_pct = _compute_pnl(
+        """Fully close whatever quantity is still open on this trade.
+
+        - Status OPEN  → the whole ``trade.quantity`` is still open.
+        - Status TP1_HIT → only half is left (50% was closed at TP1).
+
+        Correctly accounts for entry fee, previous partial exit fee (if any)
+        and this leg's exit fee so ``realized_pnl_usdt`` reflects true net
+        P&L after Binance-equivalent trading fees.
+        """
+        remaining_qty = _remaining_qty(trade)
+        gross_pnl, _ = _compute_pnl(
             side=trade.side,
             entry=trade.entry_price,
             exit_price=current_price,
-            qty=trade.quantity,
+            qty=remaining_qty,
             leverage=trade.leverage,
         )
-        exit_fee = current_price * trade.quantity * FEE_RATE
-        total_fee = trade.fee_usdt + exit_fee
-        realized = pnl_usdt - exit_fee
+        # Entry fee attributable to *this* leg (proportional to closed qty).
+        entry_fee_share = trade.entry_price * remaining_qty * FEE_RATE
+        exit_fee = current_price * remaining_qty * FEE_RATE
+        net_leg_pnl = gross_pnl - entry_fee_share - exit_fee
 
+        prev_realized = trade.realized_pnl_usdt or 0.0
+        trade.realized_pnl_usdt = round(prev_realized + net_leg_pnl, 4)
+        trade.fee_usdt = round((trade.fee_usdt or 0.0) + exit_fee, 4)
         trade.exit_price = current_price
-        trade.realized_pnl_usdt = round(realized, 4)
-        trade.realized_pnl_pct = round(pnl_pct * 100.0, 4)
-        trade.fee_usdt = round(total_fee, 4)
         trade.closed_at = datetime.now(tz=timezone.utc)
         trade.notes = f"paper close: {reason}"
-        # Status set by caller based on reason
+
+        # Final pnl_pct = net realised PnL divided by margin used at open.
+        margin = (trade.entry_price * trade.quantity) / max(trade.leverage, 1)
+        trade.realized_pnl_pct = round(
+            (trade.realized_pnl_usdt / max(margin, 1e-9)) * 100.0, 4
+        )
 
         async with session_scope() as session:
             session.add(trade)
@@ -147,7 +163,11 @@ class PaperExecutor(BaseExecutor):
             trade_id=trade.id,
             reason=reason,
             price=current_price,
-            pnl_usdt=realized,
+            gross_pnl=round(gross_pnl, 6),
+            entry_fee_share=round(entry_fee_share, 6),
+            exit_fee=round(exit_fee, 6),
+            net_pnl_leg=round(net_leg_pnl, 6),
+            realized_total=trade.realized_pnl_usdt,
         )
         return ExecutionResult(ok=True, trade=trade)
 
@@ -219,16 +239,22 @@ class PaperExecutor(BaseExecutor):
                 if trade not in changed:
                     changed.append(trade)
             elif tp1_hit:
-                # Partial 50% close at TP1
+                # Partial 50% close at TP1 — book its share of entry+exit fee.
                 half_qty = trade.quantity / 2
-                partial_pnl, _ = _compute_pnl(
+                gross_leg, _ = _compute_pnl(
                     side=side,
                     entry=trade.entry_price,
                     exit_price=trade.take_profit_1,
                     qty=half_qty,
                     leverage=trade.leverage,
                 )
-                trade.realized_pnl_usdt = round((trade.realized_pnl_usdt or 0.0) + partial_pnl, 4)
+                entry_fee_share = trade.entry_price * half_qty * FEE_RATE
+                exit_fee = trade.take_profit_1 * half_qty * FEE_RATE
+                net_leg = gross_leg - entry_fee_share - exit_fee
+                trade.realized_pnl_usdt = round(
+                    (trade.realized_pnl_usdt or 0.0) + net_leg, 4
+                )
+                trade.fee_usdt = round((trade.fee_usdt or 0.0) + exit_fee, 4)
 
                 # If trailing is off, do the legacy "move SL to BE".
                 # If trailing is active, leave SL where trailing put it.
@@ -306,7 +332,11 @@ def _compute_pnl(
     qty: float,
     leverage: int,
 ) -> tuple[float, float]:
-    """Return (pnl_usdt, pnl_pct_of_margin)."""
+    """Return (gross_pnl_usdt, gross_pnl_pct_of_margin) — fees NOT deducted.
+
+    Callers are responsible for subtracting entry+exit fees; centralising
+    that here would silently double-count when partial fills happen.
+    """
     if side == Side.LONG.value:
         move = exit_price - entry
     else:
@@ -315,6 +345,18 @@ def _compute_pnl(
     margin = (entry * qty) / max(leverage, 1)
     pnl_pct = pnl_usdt / max(margin, 1e-9)
     return pnl_usdt, pnl_pct
+
+
+def _remaining_qty(trade: Trade) -> float:
+    """How much quantity is still open right now.
+
+    Paper trades close 50% at TP1 and the remaining 50% at TP2 (or SL if
+    price reverses). So a trade in TP1_HIT state has half the original
+    quantity left; a trade still OPEN has the full quantity.
+    """
+    if trade.status == SignalStatus.TP1_HIT:
+        return trade.quantity / 2.0
+    return trade.quantity
 
 
 async def _persist_status(trade: Trade) -> None:
