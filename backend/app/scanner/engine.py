@@ -28,7 +28,7 @@ import asyncio
 from dataclasses import asdict
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.ws import event_bus
 from app.core.config import settings
@@ -441,10 +441,10 @@ class ScannerEngine:
 
     async def _equity_for(self, cfg: UserConfig, source: MarketDataSource) -> float:
         if cfg.trading_mode == TradingMode.PAPER:
-            return float(cfg.paper_balance)
+            return await self._paper_equity(cfg)
         # Live mode is crypto-only; use the underlying Binance REST client.
         if not isinstance(source, BinanceDataSource):
-            return float(cfg.paper_balance)
+            return await self._paper_equity(cfg)
         if not cfg.binance_api_key_enc:
             log.warning("scanner.live_no_credentials")
             return 0.0
@@ -455,6 +455,28 @@ class ScannerEngine:
         except Exception as e:  # noqa: BLE001
             log.error("scanner.equity_fetch_failed", error=str(e))
             return 0.0
+
+    @staticmethod
+    async def _paper_equity(cfg: UserConfig) -> float:
+        """Return the *effective* paper balance for risk sizing.
+
+        Effective balance = starting balance + sum of realized P&L across
+        every paper trade (including partial TP1 fills whose profit has
+        already been booked). This is what makes wins compound and losses
+        shrink the pot naturally, matching how a real Binance wallet
+        behaves.
+
+        Never returns a negative number — clamped at 0 so the risk
+        manager rejects new trades cleanly once the pot is empty rather
+        than trying to size against negative equity.
+        """
+        async with session_scope() as session:
+            stmt = select(
+                func.coalesce(func.sum(Trade.realized_pnl_usdt), 0.0)
+            ).where(Trade.mode == TradingMode.PAPER)
+            result = await session.execute(stmt)
+            realized = float(result.scalar_one() or 0.0)
+        return max(float(cfg.paper_balance) + realized, 0.0)
 
     def _all_relevant_symbols(self, cfg: UserConfig) -> list[str]:
         csv = (

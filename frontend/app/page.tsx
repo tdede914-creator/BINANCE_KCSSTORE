@@ -308,8 +308,25 @@ export default function DashboardPage() {
         <StatCard label="Total trades" value={stats?.total_trades ?? "—"} />
         <StatCard label="Open" value={stats?.open_trades ?? "—"} />
         <StatCard
-          label="Paper balance"
-          value={cfg ? `$${formatUsdt(cfg.paper_balance)}` : "—"}
+          label="Paper equity"
+          value={
+            cfg && stats
+              ? `$${formatUsdt(cfg.paper_balance + stats.total_pnl_usdt)}`
+              : cfg
+                ? `$${formatUsdt(cfg.paper_balance)}`
+                : "—"
+          }
+          hint={
+            cfg
+              ? `start $${formatUsdt(cfg.paper_balance)} ${
+                  stats && stats.total_pnl_usdt !== 0
+                    ? `${stats.total_pnl_usdt >= 0 ? "+" : ""}${formatUsdt(
+                        stats.total_pnl_usdt,
+                      )}`
+                    : ""
+                }`
+              : undefined
+          }
         />
       </div>
 
