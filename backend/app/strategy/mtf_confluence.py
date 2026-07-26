@@ -63,33 +63,56 @@ class MTFConfluenceStrategy:
         bias_tf: str,
         setup_tf: str,
         entry_tf: str,
-    ) -> SignalProposal | None:
-        """Run all three checks; return a proposal only if all pass."""
+    ) -> tuple[SignalProposal | None, dict]:
+        """Run all three checks; return ``(proposal_or_None, diagnostics)``.
+
+        The diagnostics dict is always populated so the scanner can surface
+        WHY a signal was skipped even when the return value is None. The
+        top-level ``stage`` key tells you the last gate reached, and
+        ``reason`` gives a short human-readable explanation.
+        """
+        diag: dict = {"symbol": symbol, "stage": "warmup"}
+
         if len(bias_df) < self.ctx.ema_slow + 5:
-            return None
+            diag["reason"] = f"not enough bias data ({len(bias_df)} bars)"
+            return None, diag
         if len(setup_df) < 60:
-            return None
+            diag["reason"] = f"not enough setup data ({len(setup_df)} bars)"
+            return None, diag
         if len(entry_df) < 60:
-            return None
+            diag["reason"] = f"not enough entry data ({len(entry_df)} bars)"
+            return None, diag
 
         # ---- 1. Bias -----------------------------------------------------
+        diag["stage"] = "bias"
         bias, bias_diag = self._compute_bias(bias_df)
+        diag["bias"] = bias_diag
         if bias == Bias.NEUTRAL:
-            return None
+            diag["reason"] = bias_diag.get("reason", "neutral bias")
+            return None, diag
+        diag["bias_side"] = bias.value
 
         # ---- 2. Setup ----------------------------------------------------
+        diag["stage"] = "setup"
         setup_ok, setup_diag = self._compute_setup(setup_df, bias)
+        diag["setup"] = setup_diag
         if not setup_ok:
-            return None
+            diag["reason"] = setup_diag.get("reason", "no setup zone")
+            return None, diag
 
         # ---- 3. Trigger --------------------------------------------------
+        diag["stage"] = "trigger"
         trigger_ok, entry_price, sl, tp1, tp2, trig_diag = self._compute_trigger(
             entry_df, bias
         )
+        diag["trigger"] = trig_diag
         if not trigger_ok:
-            return None
+            diag["reason"] = trig_diag.get("reason", "no trigger")
+            return None, diag
 
         # ---- Confidence score --------------------------------------------
+        diag["stage"] = "fired"
+        diag["reason"] = "all gates passed"
         confidence = self._score_confidence(bias_diag, setup_diag, trig_diag)
 
         reason_parts = [
@@ -98,7 +121,7 @@ class MTFConfluenceStrategy:
             f"Trigger: {trig_diag.get('reason', 'ok')} on {entry_tf}",
         ]
 
-        return SignalProposal(
+        proposal = SignalProposal(
             symbol=symbol,
             side=Side.LONG if bias == Bias.LONG else Side.SHORT,
             entry_price=entry_price,
@@ -117,6 +140,7 @@ class MTFConfluenceStrategy:
                 "ctx": asdict(self.ctx),
             },
         )
+        return proposal, diag
 
     # ------------------------------------------------------------------
     # 1. Bias

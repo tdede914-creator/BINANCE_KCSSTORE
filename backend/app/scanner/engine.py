@@ -68,6 +68,12 @@ class ScannerEngine:
         self._source_mode: MarketMode | None = None
         # Cache filters per symbol to avoid re-fetching exchangeInfo every tick.
         self._filter_cache: dict[str, dict] = {}
+        # In-memory diagnostics for the most recent evaluation of each
+        # watchlist symbol. Exposed via GET /api/scanner/diagnostics so the
+        # UI can show *why* a signal did / didn't fire this tick.
+        self._diagnostics: dict[str, dict] = {}
+        self._last_tick_ts: datetime | None = None
+        self._last_tick_market: MarketMode | None = None
 
     def stop(self) -> None:
         self._stop.set()
@@ -129,6 +135,8 @@ class ScannerEngine:
 
     async def _tick(self) -> None:
         cfg = await self._load_config()
+        self._last_tick_ts = datetime.now(tz=timezone.utc)
+        self._last_tick_market = cfg.market_mode
 
         # Pick / refresh the data source for the current market mode.
         source = await self._ensure_source(cfg.market_mode)
@@ -207,7 +215,7 @@ class ScannerEngine:
             source.get_klines(symbol, cfg.entry_tf, limit=200),
         )
 
-        proposal = strategy.evaluate(
+        proposal, diag = strategy.evaluate(
             symbol,
             bias_df=bias_df,
             setup_df=setup_df,
@@ -216,7 +224,17 @@ class ScannerEngine:
             setup_tf=cfg.setup_tf,
             entry_tf=cfg.entry_tf,
         )
+        diag["ts"] = datetime.now(tz=timezone.utc).isoformat()
+        diag["market"] = cfg.market_mode.value
+        self._diagnostics[symbol] = diag
+
         if proposal is None:
+            log.info(
+                "scanner.no_signal",
+                symbol=symbol,
+                stage=diag.get("stage"),
+                reason=diag.get("reason"),
+            )
             return
 
         # -------------- FOREX: signals-only path --------------

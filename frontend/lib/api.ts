@@ -53,6 +53,21 @@ export interface SRResponse {
   levels: SRLevel[];
 }
 
+export interface SymbolDiag {
+  symbol: string;
+  stage: "warmup" | "bias" | "setup" | "trigger" | "fired" | "unknown";
+  reason: string | null;
+  ts: string | null;
+  market: string | null;
+  bias_side: string | null;
+}
+
+export interface ScannerDiagnostics {
+  last_tick_ts: string | null;
+  last_tick_market: string | null;
+  symbols: SymbolDiag[];
+}
+
 /**
  * Resolve the backend URL.
  *
@@ -158,6 +173,10 @@ export const api = {
   },
   closeTrade: (id: number) =>
     request<Trade>(`/api/trades/${id}/close`, { method: "POST" }),
+
+  // ----- Scanner introspection -----
+  getScannerDiagnostics: () =>
+    request<ScannerDiagnostics>("/api/scanner/diagnostics"),
 
   // ----- Market data -----
   getKlines: (params: { symbol: string; interval?: string; limit?: number }) => {

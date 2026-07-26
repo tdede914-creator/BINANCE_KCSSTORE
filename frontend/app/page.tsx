@@ -8,6 +8,7 @@ import type { Config, Signal, Stats, Trade } from "@/lib/types";
 import { StatCard } from "@/components/StatCard";
 import { SignalCard } from "@/components/SignalCard";
 import { TradeRow } from "@/components/TradeRow";
+import { ScannerPanel } from "@/components/ScannerPanel";
 import { formatUsdt } from "@/lib/format";
 import type { ChannelInfo } from "@/components/PriceChart";
 
@@ -461,6 +462,9 @@ export default function DashboardPage() {
             ))}
         </div>
       </section>
+
+      {/* Scanner status */}
+      <ScannerPanel />
 
       {/* Live signals */}
       <section>
