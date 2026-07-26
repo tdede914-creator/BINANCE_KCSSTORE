@@ -224,6 +224,58 @@ async def delete_twelvedata_key(session: SessionDep) -> ConfigOut:
     return _to_out(cfg)
 
 
+# --------------------------------------------------------------------------
+# Paper-mode reset
+# --------------------------------------------------------------------------
+
+
+class PaperResetRequest(BaseModel):
+    new_balance: float | None = Field(default=None, ge=0.01, le=10_000_000)
+
+
+class PaperResetResponse(BaseModel):
+    config: ConfigOut
+    trades_deleted: int
+    signals_deleted: int
+
+
+@router.post("/paper/reset", response_model=PaperResetResponse)
+async def reset_paper(body: PaperResetRequest, session: SessionDep) -> PaperResetResponse:
+    """Nuke every paper trade and paper signal, and optionally set a new
+    starting balance.
+
+    LIVE trades and LIVE signals are never touched — the filter keys on
+    ``mode == 'paper'``. Useful for wiping the ledger before running a
+    fresh experiment (e.g. testing whether the strategy works at a tiny
+    $10 modal).
+    """
+    from sqlalchemy import delete
+
+    from app.db.models import Signal, Trade
+
+    cfg = await get_or_create_config(session)
+
+    trades_result = await session.execute(
+        delete(Trade).where(Trade.mode == TradingMode.PAPER)
+    )
+    signals_result = await session.execute(
+        delete(Signal).where(Signal.mode == TradingMode.PAPER)
+    )
+
+    if body.new_balance is not None:
+        cfg.paper_balance = float(body.new_balance)
+
+    session.add(cfg)
+    await session.commit()
+    await session.refresh(cfg)
+
+    return PaperResetResponse(
+        config=_to_out(cfg),
+        trades_deleted=trades_result.rowcount or 0,
+        signals_deleted=signals_result.rowcount or 0,
+    )
+
+
 @router.post("/binance-keys/test")
 async def test_binance_keys(session: SessionDep) -> dict:
     """Try to read the account balance to verify the stored keys work."""

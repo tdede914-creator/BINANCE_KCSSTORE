@@ -172,6 +172,17 @@ export const api = {
   deleteTwelvedataKey: () =>
     request<Config>("/api/config/twelvedata-key", { method: "DELETE" }),
 
+  // ----- Paper mode reset -----
+  resetPaper: (new_balance: number | null = null) =>
+    request<{
+      config: Config;
+      trades_deleted: number;
+      signals_deleted: number;
+    }>("/api/config/paper/reset", {
+      method: "POST",
+      body: JSON.stringify({ new_balance }),
+    }),
+
   // ----- Signals -----
   listSignals: (params: { limit?: number; symbol?: string } = {}) => {
     const qs = new URLSearchParams();

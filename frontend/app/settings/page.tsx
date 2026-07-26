@@ -161,6 +161,82 @@ export default function SettingsPage() {
     }
   };
 
+  // Preset configurations tuned per starting balance. Kept here so it's
+  // easy to see the whole recommended set at a glance.
+  const applyPreset = async (name: "$10" | "$100" | "$1000") => {
+    const presets = {
+      "$10": {
+        paper_balance: 10,
+        risk_per_trade_pct: 5.0,   // $0.50 risk per trade — high but needed
+        leverage: 10,
+        max_concurrent_positions: 2,
+        atr_sl_mult: 0.7,          // slightly wider SL for cheaper tokens
+      },
+      "$100": {
+        paper_balance: 100,
+        risk_per_trade_pct: 2.0,
+        leverage: 5,
+        max_concurrent_positions: 3,
+        atr_sl_mult: 0.5,
+      },
+      "$1000": {
+        paper_balance: 1000,
+        risk_per_trade_pct: 1.0,
+        leverage: 5,
+        max_concurrent_positions: 3,
+        atr_sl_mult: 0.5,
+      },
+    }[name];
+    if (!window.confirm(`Apply the ${name} modal preset?`)) return;
+    setSaving(true);
+    try {
+      const updated = await api.patchConfig(presets);
+      setCfg(updated);
+      setMsg({ text: `Applied ${name} preset.`, kind: "ok" });
+    } catch (e) {
+      setMsg({ text: String(e), kind: "err" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetPaper = async () => {
+    if (
+      !window.confirm(
+        "This deletes ALL paper trades and paper signals and resets P&L to zero.\n\nLive data is untouched.\n\nContinue?",
+      )
+    ) {
+      return;
+    }
+    const raw = window.prompt(
+      "New paper balance in USDT? (leave blank to keep the current balance)",
+      "",
+    );
+    if (raw === null) return; // user cancelled the prompt
+    let newBalance: number | null = null;
+    if (raw.trim()) {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0) {
+        setMsg({ text: "Invalid balance.", kind: "err" });
+        return;
+      }
+      newBalance = n;
+    }
+    setSaving(true);
+    try {
+      const r = await api.resetPaper(newBalance);
+      setCfg(r.config);
+      setMsg({
+        text: `Reset OK — deleted ${r.trades_deleted} trades and ${r.signals_deleted} signals.`,
+        kind: "ok",
+      });
+    } catch (e) {
+      setMsg({ text: String(e), kind: "err" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!cfg) return <div>Loading…</div>;
 
   return (
@@ -299,8 +375,8 @@ export default function SettingsPage() {
             <NumberInput
               value={cfg.paper_balance}
               onCommit={(v) => patch({ paper_balance: v })}
-              step={100}
-              min={10}
+              step={10}
+              min={5}
             />
           </Field>
           <Field label="Risk per trade (%)">
@@ -309,7 +385,7 @@ export default function SettingsPage() {
               onCommit={(v) => patch({ risk_per_trade_pct: v })}
               step={0.1}
               min={0.1}
-              max={10}
+              max={20}
             />
           </Field>
           <Field label="Leverage">
@@ -330,6 +406,50 @@ export default function SettingsPage() {
               max={20}
             />
           </Field>
+        </div>
+
+        {/* Reset + presets — only relevant in paper mode */}
+        <div className="mt-4 pt-4 border-t border-border">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => applyPreset("$10")}
+              disabled={saving}
+              className="px-3 py-1.5 bg-bg-soft border border-border hover:bg-border rounded text-xs disabled:opacity-50"
+              title="Aggressive settings tuned for a $10 stress test"
+            >
+              Preset: $10 modal
+            </button>
+            <button
+              onClick={() => applyPreset("$100")}
+              disabled={saving}
+              className="px-3 py-1.5 bg-bg-soft border border-border hover:bg-border rounded text-xs disabled:opacity-50"
+              title="Balanced settings for a $100 paper start"
+            >
+              Preset: $100 modal
+            </button>
+            <button
+              onClick={() => applyPreset("$1000")}
+              disabled={saving}
+              className="px-3 py-1.5 bg-bg-soft border border-border hover:bg-border rounded text-xs disabled:opacity-50"
+              title="Conservative default"
+            >
+              Preset: $1000 modal
+            </button>
+
+            <button
+              onClick={resetPaper}
+              disabled={saving}
+              className="ml-auto px-3 py-1.5 bg-short/20 hover:bg-short/30 text-short border border-short/40 rounded text-xs disabled:opacity-50"
+              title="Delete ALL paper trades + signals, reset P&L, optionally set a new starting balance"
+            >
+              🗑 Reset paper data
+            </button>
+          </div>
+          <p className="text-xs text-muted mt-2">
+            Presets update Trading params only (balance / risk% / leverage / max
+            positions). Reset also wipes every paper trade and paper signal;
+            live data is never touched.
+          </p>
         </div>
       </Section>
 
