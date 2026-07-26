@@ -190,6 +190,14 @@ class ScannerEngine:
                 await self._scan_one(symbol, cfg, strategy, source)
             except Exception as e:  # noqa: BLE001
                 log.warning("scanner.symbol_error", symbol=symbol, error=str(e))
+                # If the strategy already advanced diag to 'fired' but the
+                # sizing / executor path blew up, reflect that in the panel
+                # so we don't leave a misleading FIRED state without a
+                # matching signal in the DB.
+                cur = self._diagnostics.get(symbol)
+                if cur and cur.get("stage") == "fired":
+                    cur["stage"] = "exec_failed"
+                    cur["reason"] = f"exception: {e}"
 
     # ----------------------------------------------------------------------
     # One-symbol pass

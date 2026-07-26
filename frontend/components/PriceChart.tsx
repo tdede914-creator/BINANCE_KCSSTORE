@@ -553,16 +553,15 @@ export function PriceChart({
 
         for (const lvl of resp.levels) {
           const isSupport = lvl.kind === "support";
-          // All S/R lines are drawn in white so they visually recede — the
-          // support-vs-resistance distinction is carried by the line style
-          // (support = dashed, resistance = dotted) and the label text.
-          // Level strength (touch count) is carried by line width.
-          const strong = lvl.touches >= 3;
+          // Draw every S/R line at the thinnest available width so they
+          // stay visible without dominating the chart. Level strength is
+          // still visible from the ×N suffix in the label and (subtly)
+          // from the line style: dashed for support, dotted for resistance.
           srPriceLinesRef.current.push(
             candleSeriesRef.current.createPriceLine({
               price: lvl.price,
               color: "#e4e9f2",
-              lineWidth: strong ? 2 : 1,
+              lineWidth: 1,
               lineStyle: isSupport ? LineStyle.Dashed : LineStyle.Dotted,
               axisLabelVisible: true,
               title: `${isSupport ? "Support" : "Resistance"} \u00d7${lvl.touches}`,
