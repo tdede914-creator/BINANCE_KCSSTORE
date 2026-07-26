@@ -10,8 +10,11 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import SessionDep, get_or_create_config
 from app.binance.rest import VALID_TIMEFRAMES, BinanceREST
+from sqlalchemy import delete
+
+from app.core.logging import get_logger
 from app.core.security import decrypt_secret, encrypt_secret, mask_key
-from app.db.models import MarketMode, TradingMode, TrailingMode, UserConfig
+from app.db.models import MarketMode, Signal, Trade, TradingMode, TrailingMode, UserConfig
 
 router = APIRouter()
 
@@ -249,31 +252,53 @@ async def reset_paper(body: PaperResetRequest, session: SessionDep) -> PaperRese
     fresh experiment (e.g. testing whether the strategy works at a tiny
     $10 modal).
     """
-    from sqlalchemy import delete
+    log = get_logger(__name__)
+    log.info("reset_paper.start", new_balance=body.new_balance)
 
-    from app.db.models import Signal, Trade
+    try:
+        cfg = await get_or_create_config(session)
 
-    cfg = await get_or_create_config(session)
+        trades_result = await session.execute(
+            delete(Trade).where(Trade.mode == TradingMode.PAPER)
+        )
+        trades_deleted = trades_result.rowcount or 0
 
-    trades_result = await session.execute(
-        delete(Trade).where(Trade.mode == TradingMode.PAPER)
-    )
-    signals_result = await session.execute(
-        delete(Signal).where(Signal.mode == TradingMode.PAPER)
-    )
+        signals_result = await session.execute(
+            delete(Signal).where(Signal.mode == TradingMode.PAPER)
+        )
+        signals_deleted = signals_result.rowcount or 0
 
-    if body.new_balance is not None:
-        cfg.paper_balance = float(body.new_balance)
+        if body.new_balance is not None:
+            cfg.paper_balance = float(body.new_balance)
 
-    session.add(cfg)
-    await session.commit()
-    await session.refresh(cfg)
+        session.add(cfg)
+        await session.commit()
+        await session.refresh(cfg)
 
-    return PaperResetResponse(
-        config=_to_out(cfg),
-        trades_deleted=trades_result.rowcount or 0,
-        signals_deleted=signals_result.rowcount or 0,
-    )
+        log.info(
+            "reset_paper.done",
+            trades_deleted=trades_deleted,
+            signals_deleted=signals_deleted,
+            new_balance=cfg.paper_balance,
+        )
+
+        return PaperResetResponse(
+            config=_to_out(cfg),
+            trades_deleted=trades_deleted,
+            signals_deleted=signals_deleted,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        # Log the full traceback for diagnosis but return a clean error
+        # to the browser instead of dropping the connection (which would
+        # surface as a generic 'Failed to fetch').
+        log.exception("reset_paper.failed", error=str(e))
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        raise HTTPException(500, f"Reset failed: {type(e).__name__}: {e}") from e
 
 
 @router.post("/binance-keys/test")
