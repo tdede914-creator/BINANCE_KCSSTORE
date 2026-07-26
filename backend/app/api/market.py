@@ -190,6 +190,7 @@ class SRResponse(BaseModel):
     symbol: str
     interval: str
     lookback: int
+    current_price: float          # last close — used by the chart for S/R numbering
     levels: list[SRLevelDTO]
 
 
@@ -227,7 +228,15 @@ async def get_sr(
             raise HTTPException(502, f"market data error: {e}") from e
 
     if len(df) < 20:
-        return SRResponse(symbol=sym, interval=interval, lookback=len(df), levels=[])
+        return SRResponse(
+            symbol=sym,
+            interval=interval,
+            lookback=len(df),
+            current_price=float(df["close"].iloc[-1]) if len(df) else 0.0,
+            levels=[],
+        )
+
+    current_price = float(df["close"].iloc[-1])
 
     swings = find_swings(df, left=3, right=3)
     zones = sr_zones(
@@ -258,5 +267,6 @@ async def get_sr(
         symbol=sym,
         interval=interval,
         lookback=len(df),
+        current_price=current_price,
         levels=levels,
     )

@@ -551,23 +551,41 @@ export function PriceChart({
         // ones (e.g. symbol changed while showSR was still true).
         clearSR();
 
-        for (const lvl of resp.levels) {
-          const isSupport = lvl.kind === "support";
-          // Draw every S/R line at the thinnest available width so they
-          // stay visible without dominating the chart. Level strength is
-          // still visible from the ×N suffix in the label and (subtly)
-          // from the line style: dashed for support, dotted for resistance.
+        // Number S/R levels by distance from current price:
+        //   Below current price → S1 (nearest), S2, S3, …
+        //   Above current price → R1 (nearest), R2, R3, …
+        // This ignores the original 'kind' classification because a level
+        // that used to be a swing high above price becomes support once
+        // price breaks and holds above it (classic S/R flip). What matters
+        // for trading is where the level sits *right now*.
+        const cp = resp.current_price;
+        const below = resp.levels
+          .filter((l) => l.price < cp)
+          .sort((a, b) => cp - a.price - (cp - b.price));
+        const above = resp.levels
+          .filter((l) => l.price >= cp)
+          .sort((a, b) => a.price - cp - (b.price - cp));
+
+        const pushLine = (
+          idx: number,
+          lvl: (typeof resp.levels)[number],
+          isSupport: boolean,
+        ) => {
+          const rank = idx + 1;
+          const kindLabel = isSupport ? `S${rank}` : `R${rank}`;
           srPriceLinesRef.current.push(
-            candleSeriesRef.current.createPriceLine({
+            candleSeriesRef.current!.createPriceLine({
               price: lvl.price,
               color: "#e4e9f2",
               lineWidth: 1,
               lineStyle: isSupport ? LineStyle.Dashed : LineStyle.Dotted,
               axisLabelVisible: true,
-              title: `${isSupport ? "Support" : "Resistance"} \u00d7${lvl.touches}`,
+              title: `${kindLabel} \u00d7${lvl.touches}`,
             }),
           );
-        }
+        };
+        below.forEach((lvl, i) => pushLine(i, lvl, true));
+        above.forEach((lvl, i) => pushLine(i, lvl, false));
 
         onSRInfoRef.current?.(resp.levels.length);
       } catch (e) {

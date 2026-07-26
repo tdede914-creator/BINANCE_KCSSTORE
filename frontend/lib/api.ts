@@ -50,6 +50,7 @@ export interface SRResponse {
   symbol: string;
   interval: string;
   lookback: number;
+  current_price: number;
   levels: SRLevel[];
 }
 
