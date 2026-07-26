@@ -70,6 +70,21 @@ export interface PriceChartProps {
 const WS_MAINNET = "wss://fstream.binance.com/ws";
 const WS_TESTNET = "wss://stream.binancefuture.com/ws";
 
+/**
+ * Pick a sensible decimal-place count for a given price magnitude so
+ * the axis / labels show the actual number instead of a rounded one.
+ *
+ *   price ~ 3000    → 2 decimals   (3000.12)
+ *   price ~ 8       → 3 decimals   (8.421)
+ *   price ~ 0.15    → 5 decimals   (0.15234)
+ *   price ~ 0.008   → 7 decimals   (0.0079524)
+ */
+function precisionFor(price: number): number {
+  if (!isFinite(price) || price === 0) return 2;
+  const mag = Math.floor(Math.log10(Math.abs(price)));
+  return Math.max(2, 4 - mag);
+}
+
 // Distinct colors used by the MTF overlay, ordered from nearest-higher to
 // highest timeframe. Chosen so they don't clash with EMAs (yellow/purple/blue)
 // or the primary channel (teal).
@@ -244,6 +259,21 @@ export function PriceChart({
 
         const candlesData: CandlestickData[] = resp.candles.map(toCandlestick);
         candleSeriesRef.current.setData(candlesData);
+
+        // Adaptive price precision so cheap tokens (1000PEPE ~ 0.008)
+        // aren't collapsed to '0.00' on the axis.
+        const lastClose = resp.candles.at(-1)?.close;
+        if (lastClose && lastClose > 0) {
+          const p = precisionFor(lastClose);
+          const minMove = 1 / Math.pow(10, p);
+          candleSeriesRef.current.applyOptions({
+            priceFormat: {
+              type: "price",
+              precision: p,
+              minMove,
+            },
+          });
+        }
 
         const fastData = ema(resp.candles, emaFast);
         const slowData = ema(resp.candles, emaSlow);
@@ -559,6 +589,7 @@ export function PriceChart({
         // price breaks and holds above it (classic S/R flip). What matters
         // for trading is where the level sits *right now*.
         const cp = resp.current_price;
+        const priceDecimals = precisionFor(cp);
         const below = resp.levels
           .filter((l) => l.price < cp)
           .sort((a, b) => cp - a.price - (cp - b.price));
@@ -573,6 +604,9 @@ export function PriceChart({
         ) => {
           const rank = idx + 1;
           const kindLabel = isSupport ? `S${rank}` : `R${rank}`;
+          // Show the real price too, so the axis label reads e.g.
+          // 'S1 ×3 · 8.421' or 'R2 ×2 · 0.0079524'.
+          const priceStr = lvl.price.toFixed(priceDecimals);
           srPriceLinesRef.current.push(
             candleSeriesRef.current!.createPriceLine({
               price: lvl.price,
@@ -580,7 +614,7 @@ export function PriceChart({
               lineWidth: 1,
               lineStyle: isSupport ? LineStyle.Dashed : LineStyle.Dotted,
               axisLabelVisible: true,
-              title: `${kindLabel} \u00d7${lvl.touches}`,
+              title: `${kindLabel} \u00d7${lvl.touches} \u00b7 ${priceStr}`,
             }),
           );
         };

@@ -46,6 +46,8 @@ from app.db.models import (
     TradingMode,
     UserConfig,
 )
+import numpy as np
+
 from app.executor.base import BaseExecutor
 from app.executor.live import LiveExecutor
 from app.executor.paper import PaperExecutor
@@ -56,6 +58,30 @@ from app.strategy.mtf_confluence import MTFConfluenceStrategy
 from app.strategy.types import SignalProposal, StrategyContext
 
 log = get_logger(__name__)
+
+
+def _json_safe(obj):
+    """Recursively convert numpy / pandas scalar types to plain Python.
+
+    The Signal.diagnostics column is stored as JSON. SQLAlchemy's JSON
+    encoder rejects numpy scalars (bool_, int64, float64) with 'Object of
+    type X is not JSON serializable', which was silently failing every
+    fired signal insert. This walker converts everything to primitives
+    before we hand the dict to the ORM.
+    """
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
 
 
 class ScannerEngine:
@@ -504,7 +530,7 @@ class ScannerEngine:
             risk_amount_usdt=0.0,
             confidence=proposal.confidence,
             reason=proposal.reason + f" | CANCELLED: {reason}",
-            diagnostics=proposal.diagnostics,
+            diagnostics=_json_safe(proposal.diagnostics),
         )
         async with session_scope() as session:
             session.add(signal)
@@ -534,7 +560,7 @@ class ScannerEngine:
             risk_amount_usdt=0.0,
             confidence=proposal.confidence,
             reason=proposal.reason + " | forex signal (manual execution)",
-            diagnostics=proposal.diagnostics,
+            diagnostics=_json_safe(proposal.diagnostics),
         )
         async with session_scope() as session:
             session.add(signal)
@@ -564,10 +590,14 @@ class ScannerEngine:
             risk_amount_usdt=sized.risk_usdt,
             confidence=proposal.confidence,
             reason=proposal.reason,
-            diagnostics={
-                **proposal.diagnostics,
-                "sized": asdict(sized) if hasattr(sized, "__dataclass_fields__") else {},
-            },
+            diagnostics=_json_safe(
+                {
+                    **proposal.diagnostics,
+                    "sized": asdict(sized)
+                    if hasattr(sized, "__dataclass_fields__")
+                    else {},
+                }
+            ),
         )
         async with session_scope() as session:
             session.add(signal)

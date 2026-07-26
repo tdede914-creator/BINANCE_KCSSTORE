@@ -336,7 +336,17 @@ class MTFConfluenceStrategy:
             bearish_react = last["close"] < last["open"] and touched_ema
             retest_ok = bearish_react and last["close"] < ema_trig
 
-        diag.update({"bos": bos_ok, "retest": retest_ok, "volume_ok": vol_ok})
+        # Cast numpy bools to native Python bool. pandas comparisons return
+        # numpy.bool_, which SQLAlchemy's JSON encoder rejects with:
+        #   TypeError: Object of type bool_ is not JSON serializable
+        # This bug was silently killing every FIRED signal at INSERT time.
+        diag.update(
+            {
+                "bos": bool(bos_ok),
+                "retest": bool(retest_ok),
+                "volume_ok": bool(vol_ok),
+            }
+        )
 
         if not (bos_ok or retest_ok):
             diag["reason"] = "no BOS or retest"
