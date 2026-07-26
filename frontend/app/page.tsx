@@ -448,8 +448,8 @@ export default function DashboardPage() {
           )}
           {showSR && (
             <>
-              <LegendDot color="#2ecc71" label="Support" />
-              <LegendDot color="#e74c3c" label="Resistance" />
+              <LegendDot color="#e4e9f2" label="Support (dashed)" />
+              <LegendDot color="#e4e9f2" label="Resistance (dotted)" />
             </>
           )}
           {showMTF &&

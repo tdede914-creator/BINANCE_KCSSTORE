@@ -553,20 +553,19 @@ export function PriceChart({
 
         for (const lvl of resp.levels) {
           const isSupport = lvl.kind === "support";
-          const color = isSupport ? "#2ecc71" : "#e74c3c";
-          // All S/R lines share a thin, unobtrusive style — same weight as
-          // the channel midline. Level strength is communicated via the
-          // "×N" label instead of line thickness, so the chart stays clean
-          // even with 10 levels drawn at once.
+          // All S/R lines are drawn in white so they visually recede — the
+          // support-vs-resistance distinction is carried by the line style
+          // (support = dashed, resistance = dotted) and the label text.
+          // Level strength (touch count) is carried by line width.
           const strong = lvl.touches >= 3;
           srPriceLinesRef.current.push(
             candleSeriesRef.current.createPriceLine({
               price: lvl.price,
-              color,
-              lineWidth: 1,
-              lineStyle: strong ? LineStyle.Dashed : LineStyle.Dotted,
+              color: "#e4e9f2",
+              lineWidth: strong ? 2 : 1,
+              lineStyle: isSupport ? LineStyle.Dashed : LineStyle.Dotted,
               axisLabelVisible: true,
-              title: `${isSupport ? "S" : "R"}×${lvl.touches}`,
+              title: `${isSupport ? "Support" : "Resistance"} \u00d7${lvl.touches}`,
             }),
           );
         }
