@@ -78,6 +78,94 @@ export interface ScannerDiagnostics {
   symbols: SymbolDiag[];
 }
 
+export interface BacktestStrategyParams {
+  ema_fast?: number;
+  ema_slow?: number;
+  ema_trigger?: number;
+  rsi_period?: number;
+  rsi_long_max?: number;
+  rsi_short_min?: number;
+  atr_period?: number;
+  atr_sl_mult?: number;
+  rr_tp1?: number;
+  rr_tp2?: number;
+}
+
+export interface BacktestRequest {
+  symbol: string;
+  bias_tf?: string;
+  setup_tf?: string;
+  entry_tf?: string;
+  days?: number;
+  initial_balance?: number;
+  risk_per_trade_pct?: number;
+  leverage?: number;
+  strategy_params?: BacktestStrategyParams;
+}
+
+export interface BacktestFill {
+  time: string;
+  price: number;
+  qty: number;
+  reason: string;
+  gross_pnl: number;
+  fees: number;
+  net_pnl: number;
+}
+
+export interface BacktestTrade {
+  open_time: string;
+  close_time: string | null;
+  side: "LONG" | "SHORT";
+  entry_price: number;
+  quantity: number;
+  initial_sl: number;
+  take_profit_1: number;
+  take_profit_2: number;
+  realized_pnl: number;
+  total_fees: number;
+  status: string;
+  close_reason: string | null;
+  fills: BacktestFill[];
+}
+
+export interface BacktestMetrics {
+  total_trades: number;
+  wins: number;
+  losses: number;
+  breakevens: number;
+  win_rate_pct: number;
+  initial_balance: number;
+  final_balance: number;
+  total_return_usdt: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  avg_win_usdt: number;
+  avg_loss_usdt: number;
+  avg_rr: number;
+  profit_factor: number;
+  sharpe_ratio: number;
+  best_trade_usdt: number;
+  worst_trade_usdt: number;
+  total_fees_usdt: number;
+  exits_tp2: number;
+  exits_sl: number;
+  exits_eop: number;
+}
+
+export interface BacktestResponse {
+  symbol: string;
+  period_from: string;
+  period_to: string;
+  bias_tf: string;
+  setup_tf: string;
+  entry_tf: string;
+  total_bars: number;
+  trades: BacktestTrade[];
+  equity_curve: { time: string; equity: number }[];
+  metrics: BacktestMetrics;
+}
+
 /**
  * Resolve the backend URL.
  *
@@ -181,6 +269,13 @@ export const api = {
     }>("/api/config/paper/reset", {
       method: "POST",
       body: JSON.stringify({ new_balance }),
+    }),
+
+  // ----- Backtest -----
+  runBacktest: (params: BacktestRequest) =>
+    request<BacktestResponse>("/api/backtest/run", {
+      method: "POST",
+      body: JSON.stringify(params),
     }),
 
   // ----- Signals -----

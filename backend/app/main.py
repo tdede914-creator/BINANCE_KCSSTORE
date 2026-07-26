@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.api import (
     auth,
+    backtest as backtest_router,
     config as config_router,
     market,
     scanner as scanner_router,
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(trades.router, prefix="/api/trades", tags=["trades"])
     app.include_router(market.router, prefix="/api/market", tags=["market"])
     app.include_router(scanner_router.router, prefix="/api/scanner", tags=["scanner"])
+    app.include_router(backtest_router.router, prefix="/api/backtest", tags=["backtest"])
     app.include_router(ws.router, prefix="/ws", tags=["ws"])
 
     @app.get("/", tags=["root"])
