@@ -30,4 +30,11 @@ RUN mkdir -p /app/data
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# In development we honour the bind mount from docker-compose.yml
+# (./backend -> /app) by enabling --reload so that `git pull` on the host
+# is picked up without a manual container restart. In production the
+# reload watchers are disabled and the baked-in image code is used.
+#
+# We wrap in a shell so we can branch on APP_ENV at container start
+# instead of building two separate images.
+CMD ["sh", "-c", "if [ \"$APP_ENV\" = \"development\" ]; then exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app; else exec uvicorn app.main:app --host 0.0.0.0 --port 8000; fi"]

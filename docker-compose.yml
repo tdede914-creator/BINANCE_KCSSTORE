@@ -40,6 +40,11 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://signals:signals_pw@postgres:5432/signals
       REDIS_URL: redis://redis:6379/0
+      # Force watchfiles (used by uvicorn --reload) to poll rather than
+      # rely on inotify. On some Docker storage drivers inotify events
+      # from bind mounts are not delivered reliably; polling is a bit
+      # more CPU-hungry but "always works".
+      WATCHFILES_FORCE_POLLING: "true"
     depends_on:
       postgres:
         condition: service_healthy
