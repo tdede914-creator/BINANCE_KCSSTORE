@@ -50,8 +50,13 @@ export function ScannerPanel() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2 text-xs font-mono">
-          <StagePill label="fired" count={stageCounts.fired} color="long" />
+        <div className="flex items-center gap-2 text-xs font-mono flex-wrap justify-end">
+          <StagePill label="executed" count={stageCounts.executed} color="long" />
+          <StagePill
+            label="rejected"
+            count={stageCounts.risk_rejected + stageCounts.exec_failed}
+            color="short"
+          />
           <StagePill label="trigger" count={stageCounts.trigger} color="yellow" />
           <StagePill label="setup" count={stageCounts.setup} color="blue" />
           <StagePill label="bias" count={stageCounts.bias} color="muted" />
@@ -111,11 +116,22 @@ export function ScannerPanel() {
 
 /* ---------------- helpers ---------------- */
 
-type StageKey = "fired" | "trigger" | "setup" | "bias" | "warmup";
+type StageKey =
+  | "executed"
+  | "fired"
+  | "risk_rejected"
+  | "exec_failed"
+  | "trigger"
+  | "setup"
+  | "bias"
+  | "warmup";
 
 function countStages(rows: SymbolDiag[]): Record<StageKey, number> {
   const counts: Record<StageKey, number> = {
+    executed: 0,
     fired: 0,
+    risk_rejected: 0,
+    exec_failed: 0,
     trigger: 0,
     setup: 0,
     bias: 0,
@@ -134,7 +150,7 @@ function StagePill({
 }: {
   label: string;
   count: number;
-  color: "long" | "yellow" | "blue" | "muted";
+  color: "long" | "short" | "yellow" | "blue" | "muted";
 }) {
   return (
     <span
@@ -142,6 +158,7 @@ function StagePill({
         "px-2 py-0.5 rounded border",
         count === 0 && "text-muted border-border bg-bg-soft",
         count > 0 && color === "long" && "text-long border-long/40 bg-long/10",
+        count > 0 && color === "short" && "text-short border-short/40 bg-short/10",
         count > 0 &&
           color === "yellow" &&
           "text-yellow-300 border-yellow-400/40 bg-yellow-500/10",
@@ -158,7 +175,16 @@ function StagePill({
 
 function StageBadge({ stage }: { stage: SymbolDiag["stage"] }) {
   const map: Record<string, { label: string; className: string }> = {
-    fired: { label: "FIRED ✓", className: "bg-long/20 text-long" },
+    executed: { label: "EXECUTED ✓", className: "bg-long/30 text-long" },
+    fired: { label: "FIRED", className: "bg-long/20 text-long" },
+    risk_rejected: {
+      label: "risk rejected",
+      className: "bg-short/20 text-short",
+    },
+    exec_failed: {
+      label: "exec failed",
+      className: "bg-short/30 text-short",
+    },
     trigger: {
       label: "trigger",
       className: "bg-yellow-500/20 text-yellow-300",

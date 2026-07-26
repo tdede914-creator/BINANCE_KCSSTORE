@@ -17,7 +17,7 @@ router = APIRouter()
 
 class SymbolDiag(BaseModel):
     symbol: str
-    stage: str                    # 'warmup' | 'bias' | 'setup' | 'trigger' | 'fired'
+    stage: str                    # warmup|bias|setup|trigger|fired|risk_rejected|executed|exec_failed
     reason: str | None = None
     ts: str | None = None         # ISO timestamp of the evaluation
     market: str | None = None
@@ -53,7 +53,16 @@ async def get_diagnostics(request: Request) -> ScannerDiagnostics:
         )
     # Sort: fired first, then trigger, setup, bias, warmup — so the user
     # sees the most-progressed symbols at the top.
-    stage_order = {"fired": 0, "trigger": 1, "setup": 2, "bias": 3, "warmup": 4}
+    stage_order = {
+        "executed": 0,
+        "fired": 1,
+        "risk_rejected": 2,
+        "exec_failed": 3,
+        "trigger": 4,
+        "setup": 5,
+        "bias": 6,
+        "warmup": 7,
+    }
     symbols.sort(key=lambda s: (stage_order.get(s.stage, 99), s.symbol))
 
     return ScannerDiagnostics(

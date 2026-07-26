@@ -55,7 +55,16 @@ export interface SRResponse {
 
 export interface SymbolDiag {
   symbol: string;
-  stage: "warmup" | "bias" | "setup" | "trigger" | "fired" | "unknown";
+  stage:
+    | "warmup"
+    | "bias"
+    | "setup"
+    | "trigger"
+    | "fired"
+    | "risk_rejected"
+    | "executed"
+    | "exec_failed"
+    | "unknown";
   reason: string | null;
   ts: string | null;
   market: string | null;

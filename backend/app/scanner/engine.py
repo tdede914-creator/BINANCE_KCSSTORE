@@ -276,7 +276,24 @@ class ScannerEngine:
                 symbol_filters=filters,
             ).size(proposal)
         except RiskRejected as e:
+            # Persist a CANCELLED signal so the user sees WHY a would-be
+            # signal never became a trade. Without this, risk-rejected
+            # setups vanish silently and the win-rate stats can look
+            # unfairly bad or hide the fact that the strategy IS firing.
             log.info("scanner.risk_rejected", symbol=symbol, reason=str(e))
+            cancelled = await self._save_cancelled_signal(
+                proposal, cfg, reason=f"risk_rejected: {e}"
+            )
+            self._diagnostics[symbol]["stage"] = "risk_rejected"
+            self._diagnostics[symbol]["reason"] = str(e)
+            await event_bus.publish(
+                {
+                    "type": "signal.new",
+                    "data": _signal_dict(cancelled),
+                    "trade": None,
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                }
+            )
             return
 
         # Snapshot entry-TF ATR for trailing (last valid value).
@@ -302,6 +319,7 @@ class ScannerEngine:
                     session.add(s)
             signal.status = SignalStatus.OPEN
             signal.trade_id = result.trade.id
+            self._diagnostics[symbol]["stage"] = "executed"
 
             log.info(
                 "scanner.signal.executed",
@@ -325,10 +343,21 @@ class ScannerEngine:
                     s.status = SignalStatus.CANCELLED
                     s.reason = (s.reason or "") + f" | exec_error: {result.error}"
                     session.add(s)
+            self._diagnostics[symbol]["stage"] = "exec_failed"
+            self._diagnostics[symbol]["reason"] = str(result.error)
             log.warning(
                 "scanner.execution_failed",
                 symbol=symbol,
                 error=result.error,
+            )
+            # Broadcast so the failed signal shows up in Recent Signals too.
+            await event_bus.publish(
+                {
+                    "type": "signal.new",
+                    "data": _signal_dict(signal),
+                    "trade": None,
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                }
             )
 
     # ----------------------------------------------------------------------
@@ -440,6 +469,39 @@ class ScannerEngine:
                 )
             )
             return rows.first() is not None
+
+    async def _save_cancelled_signal(
+        self,
+        proposal: SignalProposal,
+        cfg: UserConfig,
+        reason: str,
+    ) -> Signal:
+        """Save a signal that fired the strategy gates but got rejected
+        downstream (risk manager, execution). Kept so the user can see the
+        full history of *intended* signals, not just executed ones."""
+        signal = Signal(
+            symbol=proposal.symbol,
+            side=proposal.side.value,  # type: ignore[arg-type]
+            status=SignalStatus.CANCELLED,
+            mode=cfg.trading_mode,
+            bias_tf=proposal.bias_tf,
+            setup_tf=proposal.setup_tf,
+            entry_tf=proposal.entry_tf,
+            entry_price=proposal.entry_price,
+            stop_loss=proposal.stop_loss,
+            take_profit_1=proposal.take_profit_1,
+            take_profit_2=proposal.take_profit_2,
+            leverage=cfg.leverage,
+            quantity=0.0,
+            risk_amount_usdt=0.0,
+            confidence=proposal.confidence,
+            reason=proposal.reason + f" | CANCELLED: {reason}",
+            diagnostics=proposal.diagnostics,
+        )
+        async with session_scope() as session:
+            session.add(signal)
+            await session.flush()
+        return signal
 
     async def _save_forex_signal(
         self,
