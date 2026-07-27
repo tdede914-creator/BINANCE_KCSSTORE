@@ -187,17 +187,6 @@ class UserConfig(SQLModel, table=True):
     rb_measured_move_tp1: float = Field(default=1.0)
     rb_measured_move_tp2: float = Field(default=1.5)
 
-    # ------------------------------------------------------------
-    # TradingView webhook — signals-only, external Pine Script or
-    # alert firing into POST /api/webhook/tradingview.
-    #
-    # The secret is a per-user random token the user embeds in their
-    # alert message payload; the webhook rejects requests whose secret
-    # doesn't match, so users don't need to worry about the URL leaking.
-    # ------------------------------------------------------------
-    tradingview_webhook_enabled: bool = Field(default=False)
-    tradingview_webhook_secret: str = Field(default="")
-
     # Trailing stop
     trailing_mode: TrailingMode = Field(default=TrailingMode.OFF)
     # RR (in units of initial risk) that price must move in favor before

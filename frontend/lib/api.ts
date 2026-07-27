@@ -341,12 +341,6 @@ export const api = {
   walletBalance: () =>
     request<WalletBalance>("/api/wallet/balance"),
 
-  // ----- TradingView webhook secret rotation -----
-  regenerateTradingviewSecret: () =>
-    request<Config>("/api/config/tradingview-secret/regenerate", {
-      method: "POST",
-    }),
-
   // ----- Signals -----
   listSignals: (params: { limit?: number; symbol?: string } = {}) => {
     const qs = new URLSearchParams();
