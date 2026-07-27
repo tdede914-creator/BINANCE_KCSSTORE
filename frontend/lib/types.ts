@@ -62,6 +62,9 @@ export interface Config {
   trailing_atr_mult: number;
   trailing_percent: number;
   paper_balance: number;
+  // TradingView webhook
+  tradingview_webhook_enabled: boolean;
+  tradingview_webhook_secret: string;
 }
 
 export interface Signal {

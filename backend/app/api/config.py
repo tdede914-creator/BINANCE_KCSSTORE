@@ -80,6 +80,11 @@ class ConfigOut(BaseModel):
 
     paper_balance: float
 
+    # TradingView webhook — a way to bring in signals generated on the
+    # TradingView side (no TwelveData quota needed).
+    tradingview_webhook_enabled: bool
+    tradingview_webhook_secret: str
+
 
 class ConfigUpdate(BaseModel):
     trading_mode: TradingMode | None = None
@@ -125,6 +130,9 @@ class ConfigUpdate(BaseModel):
     trailing_percent: float | None = Field(default=None, ge=0.05, le=20.0)
 
     paper_balance: float | None = None
+
+    # TradingView webhook
+    tradingview_webhook_enabled: bool | None = None
 
 
 class BinanceKeyUpdate(BaseModel):
@@ -177,6 +185,8 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
         rb_max_range_pct=cfg.rb_max_range_pct,
         rb_atr_squeeze_ratio=cfg.rb_atr_squeeze_ratio,
         rb_breakout_buffer=cfg.rb_breakout_buffer,
+        tradingview_webhook_enabled=cfg.tradingview_webhook_enabled,
+        tradingview_webhook_secret=cfg.tradingview_webhook_secret,
         rb_measured_move_tp1=cfg.rb_measured_move_tp1,
         rb_measured_move_tp2=cfg.rb_measured_move_tp2,
         trailing_mode=cfg.trailing_mode,
@@ -193,6 +203,32 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
 @router.get("", response_model=ConfigOut)
 async def read_config(session: SessionDep) -> ConfigOut:
     cfg = await get_or_create_config(session)
+    # First-run bootstrap: give every install a stable random webhook
+    # secret so the Settings page can show a ready-to-copy URL without
+    # forcing the user to click "generate".
+    if not cfg.tradingview_webhook_secret:
+        import secrets
+        cfg.tradingview_webhook_secret = secrets.token_urlsafe(24)
+        session.add(cfg)
+        await session.commit()
+        await session.refresh(cfg)
+    return _to_out(cfg)
+
+
+@router.post("/tradingview-secret/regenerate", response_model=ConfigOut)
+async def regenerate_tradingview_secret(session: SessionDep) -> ConfigOut:
+    """Rotate the TradingView webhook secret.
+
+    Use this if the current secret leaked (e.g. was pasted into a
+    public chart) — any existing TradingView alerts using the old
+    secret will start returning 401 until updated.
+    """
+    import secrets
+    cfg = await get_or_create_config(session)
+    cfg.tradingview_webhook_secret = secrets.token_urlsafe(24)
+    session.add(cfg)
+    await session.commit()
+    await session.refresh(cfg)
     return _to_out(cfg)
 
 

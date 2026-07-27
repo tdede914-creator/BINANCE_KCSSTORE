@@ -63,6 +63,9 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("user_config", "rb_measured_move_tp2", "DOUBLE PRECISION NOT NULL DEFAULT 1.5"),
     # Signal.strategy — used to filter historical signals per strategy.
     ("signals", "strategy", "VARCHAR NOT NULL DEFAULT 'mtf_confluence'"),
+    # TradingView webhook secret + enable toggle.
+    ("user_config", "tradingview_webhook_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("user_config", "tradingview_webhook_secret", "VARCHAR NOT NULL DEFAULT ''"),
 )
 
 
