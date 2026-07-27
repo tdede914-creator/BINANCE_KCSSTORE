@@ -48,6 +48,96 @@ from app.strategy.types import Bias, Side, SignalProposal, StrategyContext
 log = get_logger(__name__)
 
 
+# --------------------------------------------------------------------------
+# Adaptive TP computation
+# --------------------------------------------------------------------------
+
+
+def _adaptive_tps(
+    *,
+    entry: float,
+    risk: float,
+    atr_val: float,
+    side: str,
+    zones: list["SRZone"],
+    ctx: "StrategyContext",
+) -> tuple[float, float, float, str]:
+    """Compute TP1/TP2/TP3 with market-structure awareness.
+
+    Strategy:
+      1. Collect S/R zones "in the direction of the trade":
+           LONG  → resistances above entry
+           SHORT → supports    below entry
+      2. Filter out zones that are too close (< 1×ATR) or too far
+         (> 10×ATR). Sort by distance from entry.
+      3. Enforce a per-tier minimum RR (0.8 / 1.5 / 2.5). A zone
+         that violates the minimum is skipped for that tier only.
+      4. Any tier that ends up without a valid zone falls back to
+         the classic risk-multiple TP (rr_tp1 / rr_tp2 / rr_tp3
+         from settings).
+
+    Returns (tp1, tp2, tp3, note) where ``note`` is a short human
+    string describing where each target came from — surfaced in
+    signal diagnostics + Telegram reason line.
+    """
+    min_atr_distance = atr_val * 1.0
+    max_atr_distance = atr_val * 10.0
+    min_rr_by_tier = (0.8, 1.5, 2.5)
+
+    if side == "LONG":
+        candidates = [
+            z.price for z in zones
+            if z.kind == "resistance"
+            and z.price > entry + min_atr_distance
+            and z.price < entry + max_atr_distance
+        ]
+        candidates.sort()   # nearest first
+        fallbacks = (
+            entry + risk * ctx.rr_tp1,
+            entry + risk * ctx.rr_tp2,
+            entry + risk * ctx.rr_tp3,
+        )
+    else:  # SHORT
+        candidates = [
+            z.price for z in zones
+            if z.kind == "support"
+            and z.price < entry - min_atr_distance
+            and z.price > entry - max_atr_distance
+        ]
+        candidates.sort(reverse=True)  # nearest first (highest support)
+        fallbacks = (
+            entry - risk * ctx.rr_tp1,
+            entry - risk * ctx.rr_tp2,
+            entry - risk * ctx.rr_tp3,
+        )
+
+    def _rr(target: float) -> float:
+        return (target - entry) / risk if side == "LONG" else (entry - target) / risk
+
+    tps: list[float] = []
+    notes: list[str] = []
+    for tier_idx, min_rr in enumerate(min_rr_by_tier):
+        picked = None
+        # Try each unused candidate. Must beat previous TP and hit
+        # the tier's min RR.
+        for c in candidates:
+            if any(abs(c - t) < 1e-12 for t in tps):
+                continue  # already used
+            if tps and ((side == "LONG" and c <= tps[-1]) or (side == "SHORT" and c >= tps[-1])):
+                continue  # must be further than previous TP
+            if _rr(c) < min_rr:
+                continue
+            picked = c
+            notes.append(f"TP{tier_idx + 1}=SR({_rr(c):.2f}R)")
+            break
+        if picked is None:
+            picked = fallbacks[tier_idx]
+            notes.append(f"TP{tier_idx + 1}=RR{min_rr_by_tier[tier_idx]:.1f}+")
+        tps.append(picked)
+
+    return tps[0], tps[1], tps[2], "  ".join(notes)
+
+
 class MTFConfluenceStrategy:
     """Stateless, receives DataFrames + context, returns a SignalProposal or None."""
 
@@ -383,6 +473,30 @@ class MTFConfluenceStrategy:
 
         # ------------ Compute SL / TP -------------
         entry = close
+        # --------------------------------------------------------------
+        # Adaptive TP model.
+        #
+        # SL is anchored to the last opposite-side swing +/- an ATR
+        # buffer (unchanged). TPs used to be a fixed RR multiple of
+        # that risk, which routinely placed the target through a real
+        # resistance / support level the market was going to react to.
+        #
+        # New rule:
+        #   1. Find zones from the same S/R detector that draws S1..Sn
+        #      / R1..Rn on the chart. Filter to the ones "in the
+        #      direction of the trade" (resistance above entry for
+        #      LONG, support below entry for SHORT).
+        #   2. Sort by distance and pick the first 3 as TP1/TP2/TP3.
+        #   3. Reject a zone if it's too close (< 1×ATR) or too far
+        #      (> 10×ATR). Fall back to the classic risk-multiple TP
+        #      for whichever tier is missing.
+        #   4. Enforce a minimum RR (0.8 for TP1, 1.5 for TP2, 2.5 for
+        #      TP3) so a nearby zone doesn't produce a laughably tight
+        #      target.
+        # --------------------------------------------------------------
+        # Get SR zones from a slightly wider swing net for better coverage.
+        zones_wide = sr_zones(df, find_swings(df, left=3, right=3))
+
         if bias == Bias.LONG:
             base_sl = prev_swing_low.price if prev_swing_low else float(df["low"].tail(10).min())
             sl = base_sl - self.ctx.atr_sl_mult * atr_val
@@ -390,9 +504,14 @@ class MTFConfluenceStrategy:
             if risk <= 0:
                 diag["reason"] = "computed SL >= entry"
                 return False, 0, 0, 0, 0, 0, diag
-            tp1 = entry + risk * self.ctx.rr_tp1
-            tp2 = entry + risk * self.ctx.rr_tp2
-            tp3 = entry + risk * self.ctx.rr_tp3
+            tp1, tp2, tp3, tp_note = _adaptive_tps(
+                entry=entry,
+                risk=risk,
+                atr_val=atr_val,
+                side="LONG",
+                zones=zones_wide,
+                ctx=self.ctx,
+            )
         else:
             base_sl = prev_swing_high.price if prev_swing_high else float(df["high"].tail(10).max())
             sl = base_sl + self.ctx.atr_sl_mult * atr_val
@@ -400,14 +519,19 @@ class MTFConfluenceStrategy:
             if risk <= 0:
                 diag["reason"] = "computed SL <= entry"
                 return False, 0, 0, 0, 0, 0, diag
-            tp1 = entry - risk * self.ctx.rr_tp1
-            tp2 = entry - risk * self.ctx.rr_tp2
-            tp3 = entry - risk * self.ctx.rr_tp3
+            tp1, tp2, tp3, tp_note = _adaptive_tps(
+                entry=entry,
+                risk=risk,
+                atr_val=atr_val,
+                side="SHORT",
+                zones=zones_wide,
+                ctx=self.ctx,
+            )
 
         diag["reason"] = (
             f"{'BOS' if bos_ok else 'Retest'}"
             f"{' + Retest' if bos_ok and retest_ok else ''}"
-            f"; RR set to {self.ctx.rr_tp1}/{self.ctx.rr_tp2}/{self.ctx.rr_tp3}"
+            f"; TPs: {tp_note}"
         )
         return True, entry, sl, tp1, tp2, tp3, diag
 
