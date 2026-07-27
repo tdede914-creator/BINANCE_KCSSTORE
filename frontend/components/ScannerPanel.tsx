@@ -67,6 +67,24 @@ export function ScannerPanel() {
 
       {open && (
         <div className="border-t border-border overflow-x-auto">
+          {diag?.reconcile_error && (
+            <div className="m-3 p-3 rounded border border-short/40 bg-short/10 text-xs">
+              <div className="font-semibold text-short mb-1">
+                ⚠ Executor reconcile failing
+              </div>
+              <div className="text-short/80 font-mono">
+                {diag.reconcile_error}
+              </div>
+              <div className="text-muted mt-2 leading-relaxed">
+                The scanner is still evaluating signals below, but Binance
+                position/order sync is blocked. In LIVE mode this usually
+                means: bad API key, VPS IP not whitelisted, or Futures
+                permission missing on the key. Check{" "}
+                <em>Settings → Binance API Keys</em> and hit{" "}
+                <em>Test LIVE readiness</em> on the Dashboard.
+              </div>
+            </div>
+          )}
           {(diag?.symbols?.length ?? 0) === 0 ? (
             <div className="p-6 text-center text-muted text-sm">
               Waiting for first scan…

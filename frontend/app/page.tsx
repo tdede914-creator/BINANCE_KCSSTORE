@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import clsx from "clsx";
 import { api } from "@/lib/api";
-import type { WalletBalance } from "@/lib/api";
+import type { LiveReadiness, WalletBalance } from "@/lib/api";
 import { useEventStream } from "@/lib/ws";
 import type { Config, Signal, Stats, Trade } from "@/lib/types";
 import { StatCard } from "@/components/StatCard";
@@ -315,6 +315,9 @@ export default function DashboardPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Dashboard</h1>
+          {cfg?.trading_mode === "live" && cfg?.market_mode === "crypto" && (
+            <LiveReadinessBadge />
+          )}
           <p className="text-sm text-muted">
             {cfg
               ? `Mode: ${cfg.trading_mode.toUpperCase()} · Scanner ${
@@ -664,5 +667,80 @@ function ChannelBadge({ info }: { info: ChannelInfo }) {
       {arrow} {info.slope_pct_total >= 0 ? "+" : ""}
       {info.slope_pct_total.toFixed(2)}% · {label}
     </span>
+  );
+}
+
+
+
+// ---------------------------------------------------------------------------
+// LiveReadinessBadge
+//
+// Small on-demand widget shown next to the dashboard title when the user
+// has toggled into LIVE + CRYPTO. It doesn't auto-fire (a network call
+// per dashboard poll would be wasteful); the user clicks "Check" and we
+// hit /api/live/live-readiness which runs the actual Binance probe.
+// Result: green "all set" pill or a list of failing checks with
+// human-readable hints (e.g. "IP not whitelisted").
+// ---------------------------------------------------------------------------
+function LiveReadinessBadge() {
+  const [result, setResult] = useState<LiveReadiness | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      setResult(await api.liveReadiness());
+    } catch (e) {
+      setResult({
+        ready: false,
+        checks: [{ name: "network", ok: false, detail: String(e) }],
+        balance_usdt: null,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mt-1 mb-2 flex flex-wrap items-start gap-2">
+      <button
+        onClick={run}
+        disabled={loading}
+        className={clsx(
+          "text-xs font-semibold px-2.5 py-1 rounded border",
+          result === null
+            ? "bg-yellow-500/10 border-yellow-400/40 text-yellow-300"
+            : result.ready
+              ? "bg-long/15 border-long/40 text-long"
+              : "bg-short/15 border-short/40 text-short",
+        )}
+        title="Run a real request against Binance to verify LIVE mode is ready"
+      >
+        {loading
+          ? "Checking…"
+          : result === null
+            ? "Test LIVE readiness"
+            : result.ready
+              ? "LIVE ready ✓"
+              : "LIVE not ready ✗"}
+      </button>
+      {result && !result.ready && (
+        <div className="text-[11px] bg-short/10 border border-short/40 rounded px-2 py-1 max-w-[600px] text-short/90 space-y-1">
+          {result.checks.filter((c) => !c.ok).map((c, i) => (
+            <div key={i}>
+              <span className="font-mono uppercase text-[10px] mr-1">
+                {c.name}:
+              </span>
+              {c.detail}
+            </div>
+          ))}
+        </div>
+      )}
+      {result && result.ready && result.balance_usdt !== null && (
+        <div className="text-[11px] bg-long/10 border border-long/40 rounded px-2 py-1 text-long/90">
+          Ready · Wallet {result.balance_usdt.toFixed(2)} USDT
+        </div>
+      )}
+    </div>
   );
 }

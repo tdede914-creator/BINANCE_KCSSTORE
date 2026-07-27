@@ -28,13 +28,20 @@ class ScannerDiagnostics(BaseModel):
     last_tick_ts: datetime | None
     last_tick_market: str | None
     symbols: list[SymbolDiag]
+    # Populated when the scanner's LIVE-mode reconcile step (fetch
+    # positions / open orders from Binance) fails. Frontend uses this
+    # to display a banner in place of the "waiting for first scan…"
+    # message when LIVE mode is misconfigured.
+    reconcile_error: str | None = None
 
 
 @router.get("/diagnostics", response_model=ScannerDiagnostics)
 async def get_diagnostics(request: Request) -> ScannerDiagnostics:
     scanner = getattr(request.app.state, "scanner", None)
     if scanner is None:
-        return ScannerDiagnostics(last_tick_ts=None, last_tick_market=None, symbols=[])
+        return ScannerDiagnostics(
+        last_tick_ts=None, last_tick_market=None, symbols=[], reconcile_error=None
+    )
 
     raw: dict[str, dict] = getattr(scanner, "_diagnostics", {}) or {}
     market = getattr(scanner, "_last_tick_market", None)
@@ -69,4 +76,5 @@ async def get_diagnostics(request: Request) -> ScannerDiagnostics:
         last_tick_ts=getattr(scanner, "_last_tick_ts", None),
         last_tick_market=market.value if hasattr(market, "value") else market,
         symbols=symbols,
+        reconcile_error=getattr(scanner, "_last_reconcile_error", None),
     )

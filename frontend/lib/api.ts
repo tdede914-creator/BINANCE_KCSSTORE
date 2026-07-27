@@ -76,6 +76,19 @@ export interface ScannerDiagnostics {
   last_tick_ts: string | null;
   last_tick_market: string | null;
   symbols: SymbolDiag[];
+  reconcile_error: string | null;
+}
+
+export interface LiveReadinessCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface LiveReadiness {
+  ready: boolean;
+  checks: LiveReadinessCheck[];
+  balance_usdt: number | null;
 }
 
 export interface BacktestStrategyParams {
@@ -359,6 +372,10 @@ export const api = {
       "/api/config/telegram/detect-chat-id",
       { method: "POST" },
     ),
+
+  // ----- LIVE-mode readiness pre-flight -----
+  liveReadiness: () =>
+    request<LiveReadiness>("/api/live/live-readiness"),
 
   // ----- Signals -----
   listSignals: (params: { limit?: number; symbol?: string } = {}) => {

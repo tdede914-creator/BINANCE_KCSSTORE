@@ -102,6 +102,12 @@ class ScannerEngine:
         self._diagnostics: dict[str, dict] = {}
         self._last_tick_ts: datetime | None = None
         self._last_tick_market: MarketMode | None = None
+        # Populated when reconcile / executor bookkeeping fails in LIVE
+        # mode (bad API key, IP not whitelisted, futures not enabled,
+        # transient 5xx). Surfaced via /api/scanner/diagnostics so the
+        # frontend can show a clear banner instead of silently
+        # producing an empty panel.
+        self._last_reconcile_error: str | None = None
 
     def stop(self) -> None:
         self._stop.set()
@@ -174,22 +180,42 @@ class ScannerEngine:
 
         # 1) Reconcile open trades in CRYPTO mode. FOREX mode is signal-only
         # (no executor), so there's nothing to reconcile.
+        #
+        # We wrap this in its OWN try/except so a failure here (e.g. Binance
+        # API key wrong / IP not whitelisted in LIVE mode, or transient
+        # HTTP timeout) never blocks the scanning half of the tick.
+        # Before this guard, a single 401 from get_open_orders would
+        # kill the whole tick and leave the diagnostics panel empty —
+        # symptom the user hit when switching PAPER → LIVE.
         if cfg.market_mode == MarketMode.CRYPTO:
-            prices = await self._fetch_current_prices(
-                source, self._all_relevant_symbols(cfg)
-            )
-            changed = await self._executor_for(cfg).check_open_trades(prices)
-            for trade in changed:
-                await event_bus.publish(
-                    {
-                        "type": "trade.update",
-                        "data": _trade_dict(trade),
-                        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-                    }
+            try:
+                prices = await self._fetch_current_prices(
+                    source, self._all_relevant_symbols(cfg)
                 )
-                # Telegram notify — TP1/TP2/SL/manual close etc. Fire and
-                # forget: never let Telegram outages block executor logic.
-                await _notify_trade(trade, cfg)
+                changed = await self._executor_for(cfg).check_open_trades(prices)
+                for trade in changed:
+                    await event_bus.publish(
+                        {
+                            "type": "trade.update",
+                            "data": _trade_dict(trade),
+                            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                        }
+                    )
+                    # Telegram notify — TP1/TP2/SL/manual close etc. Fire and
+                    # forget: never let Telegram outages block executor logic.
+                    await _notify_trade(trade, cfg)
+                # Clear any previous reconciliation error now that a
+                # tick succeeded.
+                self._last_reconcile_error = None
+            except Exception as e:  # noqa: BLE001
+                # Log + remember but DON'T re-raise. Scanning must proceed.
+                err_msg = f"{type(e).__name__}: {e}"
+                log.warning(
+                    "scanner.reconcile_failed",
+                    mode=cfg.trading_mode.value,
+                    error=err_msg,
+                )
+                self._last_reconcile_error = err_msg
 
         # 2) If scanner disabled, we stop here.
         if not cfg.scanner_enabled:
