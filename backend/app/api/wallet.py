@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from app.binance.rest import BinanceREST
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import decrypt_secret
 from app.db.database import session_scope
@@ -80,7 +81,16 @@ async def _live_balance(cfg: UserConfig) -> WalletBalance:
     try:
         key = decrypt_secret(cfg.binance_api_key_enc)
         secret = decrypt_secret(cfg.binance_api_secret_enc)
-        async with BinanceREST(testnet=cfg.binance_testnet) as rest:
+        # BinanceREST reads testnet vs mainnet from settings.binance_rest_url
+        # (env var BINANCE_TESTNET). The per-user cfg.binance_testnet toggle
+        # lets each user pick their own endpoint even if the server-wide
+        # env says otherwise.
+        base_url = (
+            settings.BINANCE_FUTURES_REST_TESTNET
+            if cfg.binance_testnet
+            else settings.BINANCE_FUTURES_REST_MAINNET
+        )
+        async with BinanceREST(base_url=base_url) as rest:
             info = await rest.get_balance_info(key, secret)
     except Exception as e:  # noqa: BLE001
         log.error("wallet.live_fetch_failed", error=str(e))
