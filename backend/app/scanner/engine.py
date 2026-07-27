@@ -115,6 +115,13 @@ class ScannerEngine:
         # entry in this dict that's still in the future, ``_scan_one``
         # skips it. Cleared automatically when the deadline passes.
         self._symbol_cooldown_until: dict[str, float] = {}
+        # Circuit breaker: track recent exec_failed events across ALL
+        # symbols. If we exceed the threshold within the window we
+        # auto-disable the scanner (equivalent to the user clicking
+        # "Scanner OFF") and send a Telegram alert so they know why.
+        # This is the last line of defence against fee bleed when a
+        # new Binance policy or a bug breaks every execution.
+        self._recent_exec_failures: list[float] = []  # unix-epoch seconds
 
     def stop(self) -> None:
         self._stop.set()
@@ -295,9 +302,11 @@ class ScannerEngine:
                 if cur and cur.get("stage") == "fired":
                     cur["stage"] = "exec_failed"
                     cur["reason"] = f"exception: {e}"
-                # Start a cool-down so we don't spam the same broken
-                # signal every tick until the underlying bug is fixed.
-                self._symbol_cooldown_until[symbol] = _time.monotonic() + 300
+                # Extend cool-down to 15 minutes so we don't spam even
+                # after the underlying bug is fixed — plenty of time
+                # for the user to notice and react.
+                self._symbol_cooldown_until[symbol] = _time.monotonic() + 900
+                await self._maybe_trip_breaker(cfg, symbol, str(e))
 
     # ----------------------------------------------------------------------
     # One-symbol pass
@@ -559,6 +568,68 @@ class ScannerEngine:
             rb_measured_move_tp2=cfg.rb_measured_move_tp2,
         )
 
+    async def _maybe_trip_breaker(
+        self, cfg: UserConfig, symbol: str, error_text: str
+    ) -> None:
+        """Track exec failures and auto-disable the scanner if too many pile up.
+
+        Threshold: 3 exec_failed events across ANY symbols within a
+        10-minute window trips the breaker. When it trips we:
+
+        - Flip cfg.scanner_enabled to False in the DB so the next tick
+          returns early and no new signals fire.
+        - Send a Telegram alert (if configured) with the last error so
+          the user knows something went wrong and can investigate.
+
+        This is the SAFETY NET after the per-symbol cool-down. Losing
+        \$0.06 in fees per broken signal adds up; killing the scanner
+        after 3 in a row limits the damage to ~\$0.18.
+        """
+        import time as _time
+        now = _time.time()
+        window = 600.0  # 10 minutes
+        limit = 3
+        self._recent_exec_failures = [
+            t for t in self._recent_exec_failures if now - t < window
+        ]
+        self._recent_exec_failures.append(now)
+        if len(self._recent_exec_failures) < limit:
+            return
+
+        log.error(
+            "scanner.circuit_breaker_tripped",
+            failures_in_window=len(self._recent_exec_failures),
+            last_symbol=symbol,
+            last_error=error_text,
+        )
+
+        # Persist scanner_enabled=False so a bot restart doesn't
+        # silently resume the bleed.
+        async with session_scope() as session:
+            row = (await session.execute(select(UserConfig).limit(1))).scalars().first()
+            if row is not None and row.scanner_enabled:
+                row.scanner_enabled = False
+                session.add(row)
+
+        # Telegram alarm.
+        try:
+            await tg_notifier.send_message(
+                cfg,
+                "🚨 *Scanner auto-disabled* 🚨\n\n"
+                f"Detected {limit} execution failures within "
+                f"{int(window / 60)} minutes. To prevent fee bleed, "
+                "the scanner has been turned off. Latest error:\n\n"
+                f"`{error_text[:300]}`\n\n"
+                "Investigate the error, then re-enable the scanner "
+                "from the dashboard when ready.",
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("scanner.breaker_notify_failed", error=str(e))
+
+        # Reset the failure count so we don't fire another alarm the
+        # instant the user re-enables the scanner.
+        self._recent_exec_failures.clear()
+
     def _executor_for(self, cfg: UserConfig) -> BaseExecutor:
         if cfg.trading_mode == TradingMode.LIVE:
             # Reuse the crypto data source's REST client when possible so
@@ -800,6 +871,11 @@ class ScannerEngine:
 # --------------------------------------------------------------------------
 # Serialization helpers for WS events (kept small + JSON-safe)
 # --------------------------------------------------------------------------
+
+
+# ==========================================================================
+# Circuit breaker — bolted onto ScannerEngine below via a mixin-style method.
+# ==========================================================================
 
 
 async def _notify_signal(signal: Signal, cfg: UserConfig) -> None:

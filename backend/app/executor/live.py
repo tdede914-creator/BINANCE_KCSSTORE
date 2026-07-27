@@ -140,7 +140,21 @@ class LiveExecutor(BaseExecutor):
         #     rejects for a price-related reason (-1111 = precision,
         #     -2021 = would trigger immediately, -4131 = stop price too
         #     close to mark price).
+        # We used to send STOP_MARKET + closePosition=true, which some
+        # Binance accounts have started rejecting with -4120 ("Order type
+        # not supported for this endpoint. Please use the Algo Order API
+        # endpoint instead."). Binance moved conditional-close orders to
+        # a separate /fapi/v1/algo/ endpoint for those accounts.
+        #
+        # Switching to reduceOnly=true + explicit quantity keeps us on the
+        # normal /fapi/v1/order endpoint and is functionally equivalent:
+        #   * reduceOnly means the order can only reduce (never open) a
+        #     position, so it's safe if TP1 already closed half.
+        #   * We size SL/TP2 to the FULL position quantity — Binance
+        #     will only close what's currently on the books, so a
+        #     partial fill after TP1 hit is handled cleanly.
         sl_price = _fmt_price(order.stop_loss, order.price_precision)
+        sl_qty = order.quantity
         sl_resp = None
         sl_error: Exception | None = None
         for attempt in range(2):
@@ -152,7 +166,8 @@ class LiveExecutor(BaseExecutor):
                     side=exit_side,
                     type="STOP_MARKET",
                     stopPrice=sl_price,
-                    closePosition="true",
+                    quantity=sl_qty,
+                    reduceOnly="true",
                     workingType="MARK_PRICE",
                     newOrderRespType="RESULT",
                 )
@@ -217,23 +232,30 @@ class LiveExecutor(BaseExecutor):
             except Exception as e:  # noqa: BLE001
                 log.warning("live.tp1_failed", symbol=symbol, error=str(e))
 
-        # 4) TP2 — TAKE_PROFIT_MARKET closePosition
+        # 4) TP2 — TAKE_PROFIT_MARKET reduceOnly (not closePosition — same
+        # -4120 concern as SL). We size TP2 to remaining position (half
+        # of original if TP1 hasn't hit, or all of it if TP1 already did).
+        # reduceOnly caps the fill at whatever's actually open, so the
+        # math takes care of itself.
+        tp2_qty = order.quantity - tp1_qty if tp1_qty > 0 else order.quantity
         tp2_order_id = ""
-        try:
-            tp2_resp = await self.rest.place_order(
-                api_key,
-                api_secret,
-                symbol=symbol,
-                side=exit_side,
-                type="TAKE_PROFIT_MARKET",
-                stopPrice=_fmt_price(order.take_profit_2, order.price_precision),
-                closePosition="true",
-                workingType="MARK_PRICE",
-                newOrderRespType="RESULT",
-            )
-            tp2_order_id = str(tp2_resp.get("orderId", ""))
-        except Exception as e:  # noqa: BLE001
-            log.warning("live.tp2_failed", symbol=symbol, error=str(e))
+        if tp2_qty > 0:
+            try:
+                tp2_resp = await self.rest.place_order(
+                    api_key,
+                    api_secret,
+                    symbol=symbol,
+                    side=exit_side,
+                    type="TAKE_PROFIT_MARKET",
+                    stopPrice=_fmt_price(order.take_profit_2, order.price_precision),
+                    quantity=tp2_qty,
+                    reduceOnly="true",
+                    workingType="MARK_PRICE",
+                    newOrderRespType="RESULT",
+                )
+                tp2_order_id = str(tp2_resp.get("orderId", ""))
+            except Exception as e:  # noqa: BLE001
+                log.warning("live.tp2_failed", symbol=symbol, error=str(e))
 
         # 5) Persist
         trade = Trade(
@@ -501,7 +523,8 @@ class LiveExecutor(BaseExecutor):
                 side=exit_side,
                 type="STOP_MARKET",
                 stopPrice=_fmt_price(new_stop_price, trade.price_precision if hasattr(trade, "price_precision") else 6),
-                closePosition="true",
+                quantity=trade.quantity,
+                reduceOnly="true",
                 workingType="MARK_PRICE",
                 newOrderRespType="RESULT",
             )
