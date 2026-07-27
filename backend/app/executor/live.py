@@ -121,41 +121,89 @@ class LiveExecutor(BaseExecutor):
             log.error("live.entry_failed", symbol=symbol, error=str(e))
             return ExecutionResult(ok=False, error=f"entry failed: {e}")
 
-        entry_price = float(entry_resp.get("avgPrice") or order.entry_price)
         entry_order_id = str(entry_resp.get("orderId", ""))
 
+        # Get the ACTUAL fill price. MARKET orders on /fapi/v1/order
+        # sometimes return avgPrice='0' in the immediate response
+        # even after the fill went through; falling back to the signal's
+        # theoretical entry means the dashboard shows a price that
+        # doesn't match what the user sees in the Binance app. Instead
+        # we fetch the position row (updated by Binance's matching
+        # engine within milliseconds of the fill) and read entryPrice
+        # from there.
+        entry_price = float(entry_resp.get("avgPrice") or 0.0)
+        if entry_price <= 0.0:
+            try:
+                await asyncio.sleep(0.3)
+                pos = await self.rest.get_position(symbol, api_key, api_secret)
+                if pos and float(pos.get("entryPrice", 0.0)) > 0.0:
+                    entry_price = float(pos["entryPrice"])
+            except Exception as e:  # noqa: BLE001
+                log.warning("live.entry_price_fetch_failed", error=str(e))
+        if entry_price <= 0.0:
+            entry_price = order.entry_price  # last-resort fallback
+
         # -------------------------------------------------------------
-        # Software SL / TP — we intentionally DO NOT place STOP_MARKET /
-        # TAKE_PROFIT_MARKET orders on Binance any more.
+        # LIMIT TPs visible in the Binance app + software-monitored SL.
         #
-        # Binance's late-2024 policy started rejecting these order
-        # types on POST /fapi/v1/order with error -4120 ("Order type
-        # not supported for this endpoint. Please use the Algo Order
-        # API endpoints instead.") — even with reduceOnly=true. That
-        # would loop: entry fills, SL rejects, emergency-close, bleed
-        # fees, repeat. Users lost real money to that loop.
+        # STOP_MARKET / TAKE_PROFIT_MARKET on /fapi/v1/order have been
+        # rejected with -4120 for this account. LIMIT reduceOnly orders
+        # DO work and Binance shows them under "Order Terbuka" so the
+        # user gets the same visibility that Andi-Hakim-style signal
+        # channels rely on ("I can see my targets on my broker app").
         #
-        # Instead we monitor price ourselves in `check_open_trades`
-        # (identical to the PaperExecutor code path) and issue a
-        # MARKET reduceOnly close when SL / TP1 / TP2 is crossed.
-        # MARKET orders are Binance's most basic type and are never
-        # rejected with -4120.
-        #
-        # Trade-offs:
-        #   +  Never -4120 again. Never fee-bleed loop.
-        #   +  Same code path as paper mode, easier to reason about.
-        #   -  If the bot process dies, the position has no on-chain
-        #      stop — the user must know this risk. Circuit breaker,
-        #      restart-on-crash, and Telegram alerts keep the window
-        #      of exposure small.
-        #   -  ~1-2 seconds slippage on close vs on-exchange stop.
-        #
-        # For the $10-$100 paper-transitioning-to-live use case this
-        # trade-off is very much worth it.
+        # SL still can't be a plain LIMIT (LIMIT fills at limit price
+        # or better, has no trigger semantics), so SL remains software.
+        # In practice this means: TPs are enforced by Binance even if
+        # our bot dies; SL only fires while the bot is alive. This is
+        # a documented, deliberate trade-off — the mixed model gives
+        # partial exchange-side safety without ever tripping -4120.
         # -------------------------------------------------------------
-        sl_order_id = ""
+        sl_order_id = ""  # SL is software
         tp1_order_id = ""
         tp2_order_id = ""
+
+        # Place TP1 as LIMIT reduceOnly, qty = half the position.
+        tp1_qty = _round_qty(order.quantity / 2, order.quantity_precision)
+        if tp1_qty > 0:
+            try:
+                tp1_resp = await self.rest.place_order(
+                    api_key,
+                    api_secret,
+                    symbol=symbol,
+                    side=exit_side,
+                    type="LIMIT",
+                    quantity=tp1_qty,
+                    price=_fmt_price(order.take_profit_1, order.price_precision),
+                    timeInForce="GTC",
+                    reduceOnly="true",
+                    newOrderRespType="RESULT",
+                )
+                tp1_order_id = str(tp1_resp.get("orderId", ""))
+                log.info("live.tp1_limit_placed", symbol=symbol, price=order.take_profit_1, qty=tp1_qty)
+            except Exception as e:  # noqa: BLE001
+                log.warning("live.tp1_limit_failed", symbol=symbol, error=str(e))
+
+        # Place TP2 as LIMIT reduceOnly, qty = the other half.
+        tp2_qty = order.quantity - tp1_qty if tp1_qty > 0 else order.quantity
+        if tp2_qty > 0:
+            try:
+                tp2_resp = await self.rest.place_order(
+                    api_key,
+                    api_secret,
+                    symbol=symbol,
+                    side=exit_side,
+                    type="LIMIT",
+                    quantity=tp2_qty,
+                    price=_fmt_price(order.take_profit_2, order.price_precision),
+                    timeInForce="GTC",
+                    reduceOnly="true",
+                    newOrderRespType="RESULT",
+                )
+                tp2_order_id = str(tp2_resp.get("orderId", ""))
+                log.info("live.tp2_limit_placed", symbol=symbol, price=order.take_profit_2, qty=tp2_qty)
+            except Exception as e:  # noqa: BLE001
+                log.warning("live.tp2_limit_failed", symbol=symbol, error=str(e))
 
         # 5) Persist
         trade = Trade(
@@ -175,7 +223,7 @@ class LiveExecutor(BaseExecutor):
             tp2_order_id=tp2_order_id,
             status=SignalStatus.OPEN,
             fee_usdt=0.0,
-            notes="live opened; SL/TP on exchange",
+            notes="live opened; TP1/TP2 LIMIT on exchange, SL software-monitored",
             # --- Trailing state ---
             trailing_mode=tc.mode,
             trailing_activation_rr=tc.activation_rr,
