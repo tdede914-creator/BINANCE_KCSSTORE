@@ -80,6 +80,17 @@ class ConfigOut(BaseModel):
 
     paper_balance: float
 
+    # Telegram — token intentionally NOT exposed (write-only via
+    # dedicated PATCH); we surface configured=True so the UI can
+    # show a "clear key" affordance without leaking the token itself.
+    telegram_enabled: bool
+    telegram_configured: bool
+    telegram_chat_id: str
+    telegram_notify_signals: bool
+    telegram_notify_trades: bool
+    telegram_notify_hourly_balance: bool
+    telegram_balance_interval_min: int
+
 
 class ConfigUpdate(BaseModel):
     trading_mode: TradingMode | None = None
@@ -125,6 +136,18 @@ class ConfigUpdate(BaseModel):
     trailing_percent: float | None = Field(default=None, ge=0.05, le=20.0)
 
     paper_balance: float | None = None
+
+    # Telegram notification toggles (token is set via dedicated endpoint)
+    telegram_enabled: bool | None = None
+    telegram_chat_id: str | None = None
+    telegram_notify_signals: bool | None = None
+    telegram_notify_trades: bool | None = None
+    telegram_notify_hourly_balance: bool | None = None
+    telegram_balance_interval_min: int | None = Field(default=None, ge=5, le=1440)
+
+
+class TelegramTokenUpdate(BaseModel):
+    bot_token: str = Field(..., min_length=20, max_length=200)
 
 
 class BinanceKeyUpdate(BaseModel):
@@ -179,6 +202,13 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
         rb_breakout_buffer=cfg.rb_breakout_buffer,
         rb_measured_move_tp1=cfg.rb_measured_move_tp1,
         rb_measured_move_tp2=cfg.rb_measured_move_tp2,
+        telegram_enabled=cfg.telegram_enabled,
+        telegram_configured=bool(cfg.telegram_bot_token_enc),
+        telegram_chat_id=cfg.telegram_chat_id,
+        telegram_notify_signals=cfg.telegram_notify_signals,
+        telegram_notify_trades=cfg.telegram_notify_trades,
+        telegram_notify_hourly_balance=cfg.telegram_notify_hourly_balance,
+        telegram_balance_interval_min=cfg.telegram_balance_interval_min,
         trailing_mode=cfg.trailing_mode,
         trailing_activation_rr=cfg.trailing_activation_rr,
         trailing_atr_mult=cfg.trailing_atr_mult,
@@ -243,6 +273,72 @@ async def delete_binance_keys(session: SessionDep) -> ConfigOut:
     await session.commit()
     await session.refresh(cfg)
     return _to_out(cfg)
+
+
+# ---------- Telegram bot token + test message ----------
+
+
+@router.post("/telegram-token", response_model=ConfigOut)
+async def set_telegram_token(body: TelegramTokenUpdate, session: SessionDep) -> ConfigOut:
+    """Store the bot token (Fernet-encrypted). Doesn't validate the token —
+    users can hit POST /telegram/test afterwards to send a live probe."""
+    cfg = await get_or_create_config(session)
+    cfg.telegram_bot_token_enc = encrypt_secret(body.bot_token.strip())
+    session.add(cfg)
+    await session.commit()
+    await session.refresh(cfg)
+    return _to_out(cfg)
+
+
+@router.delete("/telegram-token", response_model=ConfigOut)
+async def delete_telegram_token(session: SessionDep) -> ConfigOut:
+    """Clear the stored bot token and turn Telegram notifications off."""
+    cfg = await get_or_create_config(session)
+    cfg.telegram_bot_token_enc = ""
+    cfg.telegram_enabled = False
+    session.add(cfg)
+    await session.commit()
+    await session.refresh(cfg)
+    return _to_out(cfg)
+
+
+@router.post("/telegram/test")
+async def send_test_telegram(session: SessionDep) -> dict:
+    """Try to send a hello-world message with the CURRENTLY stored token.
+
+    Returns ``{ok: bool, error: str | null}``. This is the fastest way for
+    users to confirm bot token + chat_id are correct before they wait for
+    a real signal.
+    """
+    from app.telegram import notifier as tg_notifier
+    cfg = await get_or_create_config(session)
+    if not cfg.telegram_bot_token_enc:
+        return {"ok": False, "error": "Bot token not set. Save it first."}
+    if not cfg.telegram_chat_id:
+        return {"ok": False, "error": "Chat ID is empty. Fill it in and Save."}
+    # We temporarily flip 'telegram_enabled' so notifier.send_message
+    # doesn't short-circuit — the user is explicitly asking for a probe.
+    original_enabled = cfg.telegram_enabled
+    cfg.telegram_enabled = True
+    try:
+        ok = await tg_notifier.send_message(
+            cfg,
+            "✅ *Test message* from your signal bot.\n\n"
+            "Notifications are wired up correctly. You can now enable "
+            "signal / trade / hourly-balance alerts in Settings.",
+        )
+    finally:
+        cfg.telegram_enabled = original_enabled
+    if not ok:
+        return {
+            "ok": False,
+            "error": (
+                "Telegram API did not accept the message. Double-check "
+                "the bot token, that the chat ID is your user (not @username), "
+                "and that you've sent /start to the bot first."
+            ),
+        }
+    return {"ok": True, "error": None}
 
 
 @router.post("/twelvedata-key", response_model=ConfigOut)

@@ -63,6 +63,14 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("user_config", "rb_measured_move_tp2", "DOUBLE PRECISION NOT NULL DEFAULT 1.5"),
     # Signal.strategy — used to filter historical signals per strategy.
     ("signals", "strategy", "VARCHAR NOT NULL DEFAULT 'mtf_confluence'"),
+    # Telegram notifier — bot token (encrypted), chat id, per-channel toggles.
+    ("user_config", "telegram_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("user_config", "telegram_bot_token_enc", "VARCHAR NOT NULL DEFAULT ''"),
+    ("user_config", "telegram_chat_id", "VARCHAR NOT NULL DEFAULT ''"),
+    ("user_config", "telegram_notify_signals", "BOOLEAN NOT NULL DEFAULT TRUE"),
+    ("user_config", "telegram_notify_trades", "BOOLEAN NOT NULL DEFAULT TRUE"),
+    ("user_config", "telegram_notify_hourly_balance", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("user_config", "telegram_balance_interval_min", "INTEGER NOT NULL DEFAULT 60"),
 )
 
 

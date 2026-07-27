@@ -62,6 +62,15 @@ export interface Config {
   trailing_atr_mult: number;
   trailing_percent: number;
   paper_balance: number;
+
+  // Telegram notifications
+  telegram_enabled: boolean;
+  telegram_configured: boolean;
+  telegram_chat_id: string;
+  telegram_notify_signals: boolean;
+  telegram_notify_trades: boolean;
+  telegram_notify_hourly_balance: boolean;
+  telegram_balance_interval_min: number;
 }
 
 export interface Signal {

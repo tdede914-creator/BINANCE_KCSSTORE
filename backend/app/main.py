@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.db.database import init_db
 from app.scanner.engine import ScannerEngine
+from app.tasks.hourly_balance import HourlyBalanceReporter
 
 log = get_logger(__name__)
 
@@ -41,16 +42,24 @@ async def lifespan(app: FastAPI):
     app.state.scanner = scanner
     scanner_task = asyncio.create_task(scanner.run_forever())
 
+    # Start hourly-balance Telegram reporter (opt-in per user_config).
+    reporter = HourlyBalanceReporter()
+    app.state.hourly_reporter = reporter
+    reporter_task = asyncio.create_task(reporter.run_forever())
+
     try:
         yield
     finally:
         log.info("app.shutdown")
         scanner.stop()
-        scanner_task.cancel()
-        try:
-            await scanner_task
-        except asyncio.CancelledError:
-            pass
+        reporter.stop()
+        for t in (scanner_task, reporter_task):
+            t.cancel()
+        for t in (scanner_task, reporter_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
 
 
 def create_app() -> FastAPI:

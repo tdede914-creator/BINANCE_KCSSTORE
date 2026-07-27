@@ -341,6 +341,20 @@ export const api = {
   walletBalance: () =>
     request<WalletBalance>("/api/wallet/balance"),
 
+  // ----- Telegram bot token + test message -----
+  setTelegramToken: (bot_token: string) =>
+    request<Config>("/api/config/telegram-token", {
+      method: "POST",
+      body: JSON.stringify({ bot_token }),
+    }),
+  deleteTelegramToken: () =>
+    request<Config>("/api/config/telegram-token", { method: "DELETE" }),
+  testTelegram: () =>
+    request<{ ok: boolean; error: string | null }>(
+      "/api/config/telegram/test",
+      { method: "POST" },
+    ),
+
   // ----- Signals -----
   listSignals: (params: { limit?: number; symbol?: string } = {}) => {
     const qs = new URLSearchParams();

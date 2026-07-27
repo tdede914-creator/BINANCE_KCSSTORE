@@ -279,6 +279,18 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Telegram notifications */}
+      <TelegramSection
+        cfg={cfg}
+        saving={saving}
+        onPatch={patch}
+        onReload={async () => {
+          const c = await api.getConfig();
+          setCfg(c);
+        }}
+        onMsg={setMsg}
+      />
+
       {/* Binance API keys */}
       <Section title="Binance API Keys" hint="Keys are encrypted (Fernet) before being stored. Grant Futures permission only. NEVER enable withdrawals.">
         <div className="text-sm mb-3">
@@ -801,6 +813,313 @@ export default function SettingsPage() {
 }
 
 /* ---------- small building blocks ---------- */
+
+// ---------------------------------------------------------------------------
+// Telegram Notifications
+//
+// Users only need:
+//   1. A bot token from @BotFather in Telegram
+//   2. Their chat ID (start a conversation with the bot, then hit
+//      https://api.telegram.org/bot<TOKEN>/getUpdates and copy the
+//      "chat":{"id": <this>} number)
+//
+// After that they enable the master toggle + pick which classes of
+// events they want to receive (signals, trade updates, hourly balance).
+// A "Send test message" button confirms everything works before
+// production.
+// ---------------------------------------------------------------------------
+function TelegramSection({
+  cfg,
+  saving,
+  onPatch,
+  onReload,
+  onMsg,
+}: {
+  cfg: Config;
+  saving: boolean;
+  onPatch: (u: Partial<Config>) => Promise<void>;
+  onReload: () => Promise<void>;
+  onMsg: (m: { text: string; kind: "ok" | "err" } | null) => void;
+}) {
+  const [token, setToken] = useState("");
+  const [chatId, setChatId] = useState(cfg.telegram_chat_id ?? "");
+  const [testing, setTesting] = useState(false);
+
+  // Reset the chat_id field if the config reloaded from server with a
+  // different value (e.g. right after a Save from another tab).
+  useEffect(() => {
+    setChatId(cfg.telegram_chat_id ?? "");
+  }, [cfg.telegram_chat_id]);
+
+  const saveToken = async () => {
+    if (!token.trim()) {
+      onMsg({ text: "Paste your bot token first.", kind: "err" });
+      return;
+    }
+    try {
+      await api.setTelegramToken(token.trim());
+      setToken("");
+      onMsg({ text: "Bot token saved (encrypted).", kind: "ok" });
+      await onReload();
+    } catch (e) {
+      onMsg({ text: String(e), kind: "err" });
+    }
+  };
+
+  const clearToken = async () => {
+    if (!confirm("Clear the stored Telegram bot token?")) return;
+    try {
+      await api.deleteTelegramToken();
+      onMsg({ text: "Bot token cleared.", kind: "ok" });
+      await onReload();
+    } catch (e) {
+      onMsg({ text: String(e), kind: "err" });
+    }
+  };
+
+  const saveChatId = async () => {
+    try {
+      await onPatch({ telegram_chat_id: chatId.trim() });
+      onMsg({ text: "Chat ID saved.", kind: "ok" });
+    } catch (e) {
+      onMsg({ text: String(e), kind: "err" });
+    }
+  };
+
+  const sendTest = async () => {
+    setTesting(true);
+    try {
+      const r = await api.testTelegram();
+      if (r.ok) {
+        onMsg({ text: "Test message delivered.", kind: "ok" });
+      } else {
+        onMsg({ text: r.error || "Telegram API rejected the request.", kind: "err" });
+      }
+    } catch (e) {
+      onMsg({ text: String(e), kind: "err" });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <Section
+      title="Telegram Notifications"
+      hint="Push signals, trade updates, and an hourly wallet snapshot to a Telegram chat. Bot token is stored encrypted. No incoming commands — this is one-way, bot → you."
+    >
+      <div className="space-y-4">
+        {/* Setup guide */}
+        <details className="text-xs text-muted bg-bg-soft border border-border rounded p-3">
+          <summary className="cursor-pointer text-white font-semibold">
+            How to get bot token + chat ID (3 min)
+          </summary>
+          <ol className="mt-2 space-y-1 list-decimal pl-4 leading-relaxed">
+            <li>
+              Open Telegram, search{" "}
+              <code className="text-white">@BotFather</code>, send{" "}
+              <code className="text-white">/newbot</code>. Give it a name
+              and a username ending in <code className="text-white">bot</code>.
+              You'll get a token like{" "}
+              <code className="text-white">123456:AAE...xyz</code>. Paste it below.
+            </li>
+            <li>
+              Open a chat with your new bot and send{" "}
+              <code className="text-white">/start</code>. Anything is fine
+              — the bot just needs to have received one message from you
+              so it's allowed to reply.
+            </li>
+            <li>
+              In any browser visit{" "}
+              <code className="text-white">
+                https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates
+              </code>{" "}
+              (replace &lt;TOKEN&gt; with yours). Find{" "}
+              <code className="text-white">"chat":&#123;"id": ...&#125;</code>{" "}
+              in the JSON — that number is your chat ID. Paste it below.
+            </li>
+            <li>Enable notifications and click <em>Send test</em>.</li>
+          </ol>
+        </details>
+
+        {/* Bot token */}
+        <div>
+          <div className="text-xs text-muted mb-1">
+            Bot token{" "}
+            <span
+              className={clsx(
+                "ml-2 px-1.5 py-0.5 rounded text-[10px]",
+                cfg.telegram_configured
+                  ? "bg-long/20 text-long"
+                  : "bg-yellow-500/20 text-yellow-400",
+              )}
+            >
+              {cfg.telegram_configured ? "configured" : "not set"}
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              disabled={saving}
+              placeholder={
+                cfg.telegram_configured
+                  ? "•••••••• (paste a new token to replace)"
+                  : "123456:AAE..."
+              }
+              className="flex-1 bg-bg-soft border border-border rounded px-3 py-2 text-sm font-mono"
+            />
+            <button
+              onClick={saveToken}
+              disabled={saving || !token.trim()}
+              className="px-4 py-2 bg-long/20 hover:bg-long/30 text-long border border-long/40 rounded text-sm disabled:opacity-40"
+            >
+              Save
+            </button>
+            {cfg.telegram_configured && (
+              <button
+                onClick={clearToken}
+                disabled={saving}
+                className="px-3 py-2 bg-bg-soft hover:bg-border text-muted border border-border rounded text-sm"
+                title="Delete stored token"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Chat ID */}
+        <div>
+          <div className="text-xs text-muted mb-1">Chat ID</div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={chatId}
+              onChange={(e) => setChatId(e.target.value)}
+              disabled={saving}
+              placeholder="e.g. 987654321"
+              className="flex-1 bg-bg-soft border border-border rounded px-3 py-2 text-sm font-mono"
+            />
+            <button
+              onClick={saveChatId}
+              disabled={saving || chatId === cfg.telegram_chat_id}
+              className="px-4 py-2 bg-bg-soft hover:bg-border text-white border border-border rounded text-sm disabled:opacity-40"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+
+        {/* Master enable + test */}
+        <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border/50">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={cfg.telegram_enabled}
+              onChange={(e) => onPatch({ telegram_enabled: e.target.checked })}
+              disabled={saving || !cfg.telegram_configured || !cfg.telegram_chat_id}
+            />
+            <span className="text-sm">
+              Enable Telegram notifications
+              {(!cfg.telegram_configured || !cfg.telegram_chat_id) && (
+                <span className="ml-2 text-[10px] text-muted">
+                  (set token + chat ID first)
+                </span>
+              )}
+            </span>
+          </label>
+          <button
+            onClick={sendTest}
+            disabled={
+              saving ||
+              testing ||
+              !cfg.telegram_configured ||
+              !cfg.telegram_chat_id
+            }
+            className="px-3 py-1.5 bg-bg-soft hover:bg-border text-white border border-border rounded text-xs disabled:opacity-40"
+          >
+            {testing ? "Sending…" : "Send test message"}
+          </button>
+        </div>
+
+        {/* Per-channel opt-ins — only meaningful when the master is on. */}
+        {cfg.telegram_enabled && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-3 border-t border-border/50">
+            <label className="flex items-start gap-2 p-3 bg-bg-soft border border-border rounded cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cfg.telegram_notify_signals}
+                onChange={(e) =>
+                  onPatch({ telegram_notify_signals: e.target.checked })
+                }
+                className="mt-0.5"
+              />
+              <div>
+                <div className="text-sm font-semibold">Signals</div>
+                <div className="text-xs text-muted mt-1">
+                  Every time a strategy fires (MTF Confluence, Range Breakout, …).
+                </div>
+              </div>
+            </label>
+            <label className="flex items-start gap-2 p-3 bg-bg-soft border border-border rounded cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cfg.telegram_notify_trades}
+                onChange={(e) =>
+                  onPatch({ telegram_notify_trades: e.target.checked })
+                }
+                className="mt-0.5"
+              />
+              <div>
+                <div className="text-sm font-semibold">Trade updates</div>
+                <div className="text-xs text-muted mt-1">
+                  TP1 hit, TP2 hit, SL hit, manual close — the whole life cycle.
+                </div>
+              </div>
+            </label>
+            <label className="flex items-start gap-2 p-3 bg-bg-soft border border-border rounded cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cfg.telegram_notify_hourly_balance}
+                onChange={(e) =>
+                  onPatch({ telegram_notify_hourly_balance: e.target.checked })
+                }
+                className="mt-0.5"
+              />
+              <div>
+                <div className="text-sm font-semibold">
+                  Wallet snapshot every {cfg.telegram_balance_interval_min}m
+                </div>
+                <div className="text-xs text-muted mt-1">
+                  Real balance from Binance in LIVE mode, computed paper
+                  equity in PAPER mode.
+                </div>
+              </div>
+            </label>
+          </div>
+        )}
+
+        {cfg.telegram_enabled && cfg.telegram_notify_hourly_balance && (
+          <div className="pt-1">
+            <Field
+              label="Balance snapshot interval (minutes)"
+              hint="Min 5, max 1440 (once a day). Default 60."
+            >
+              <NumberInput
+                value={cfg.telegram_balance_interval_min}
+                onCommit={(v) => onPatch({ telegram_balance_interval_min: v })}
+                step={5}
+                min={5}
+                max={1440}
+              />
+            </Field>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
 
 function Section({
   title,

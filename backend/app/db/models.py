@@ -187,6 +187,26 @@ class UserConfig(SQLModel, table=True):
     rb_measured_move_tp1: float = Field(default=1.0)
     rb_measured_move_tp2: float = Field(default=1.5)
 
+    # ---------------------------------------------------------------
+    # Telegram notifications. Bot token is stored encrypted (same
+    # Fernet helper as the Binance keys). chat_id is a plain integer
+    # / channel handle; leaving unencrypted is fine — it's not secret.
+    # ---------------------------------------------------------------
+    telegram_enabled: bool = Field(default=False)
+    telegram_bot_token_enc: str = Field(default="")
+    telegram_chat_id: str = Field(default="")
+
+    # Per-channel opt-ins so users can silence a specific event class
+    # without turning the whole integration off.
+    telegram_notify_signals: bool = Field(default=True)
+    telegram_notify_trades: bool = Field(default=True)
+    telegram_notify_hourly_balance: bool = Field(default=False)
+
+    # How often the hourly-balance job pushes. 60 is the ask; we allow
+    # 5..1440 so it can be tuned (e.g. every 6h for a lightweight
+    # digest). 0 disables regardless of the toggle above.
+    telegram_balance_interval_min: int = Field(default=60)
+
     # Trailing stop
     trailing_mode: TrailingMode = Field(default=TrailingMode.OFF)
     # RR (in units of initial risk) that price must move in favor before

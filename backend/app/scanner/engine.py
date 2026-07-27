@@ -57,6 +57,7 @@ from app.strategy.indicators import atr as atr_series
 from app.strategy.mtf_confluence import MTFConfluenceStrategy
 from app.strategy.range_breakout import RangeBreakoutStrategy
 from app.strategy.types import SignalProposal, StrategyContext
+from app.telegram import notifier as tg_notifier
 
 log = get_logger(__name__)
 
@@ -186,6 +187,9 @@ class ScannerEngine:
                         "timestamp": datetime.now(tz=timezone.utc).isoformat(),
                     }
                 )
+                # Telegram notify — TP1/TP2/SL/manual close etc. Fire and
+                # forget: never let Telegram outages block executor logic.
+                await _notify_trade(trade, cfg)
 
         # 2) If scanner disabled, we stop here.
         if not cfg.scanner_enabled:
@@ -332,6 +336,7 @@ class ScannerEngine:
                     "timestamp": datetime.now(tz=timezone.utc).isoformat(),
                 }
             )
+            await _notify_signal(signal, cfg)
             return
 
         # -------------- CRYPTO: full paper/live execution --------------
@@ -414,6 +419,7 @@ class ScannerEngine:
                     "timestamp": datetime.now(tz=timezone.utc).isoformat(),
                 }
             )
+            await _notify_signal(signal, cfg)
         else:
             async with session_scope() as session:
                 s = await session.get(Signal, signal.id)
@@ -717,6 +723,36 @@ class ScannerEngine:
 # --------------------------------------------------------------------------
 # Serialization helpers for WS events (kept small + JSON-safe)
 # --------------------------------------------------------------------------
+
+
+async def _notify_signal(signal: Signal, cfg: UserConfig) -> None:
+    """Send a Telegram alert for a newly fired signal. Silent on failure."""
+    if not cfg.telegram_enabled or not cfg.telegram_notify_signals:
+        return
+    try:
+        await tg_notifier.send_message(cfg, tg_notifier.render_signal(signal))
+    except Exception as e:  # noqa: BLE001 — never crash caller
+        log.warning("notify.signal_failed", error=str(e))
+
+
+async def _notify_trade(trade: Trade, cfg: UserConfig) -> None:
+    """Send a Telegram alert for a trade transition (TP/SL/manual/trail)."""
+    if not cfg.telegram_enabled or not cfg.telegram_notify_trades:
+        return
+    # Map SignalStatus → event label. TP1_HIT fires while still open;
+    # CLOSED_* is a terminal transition.
+    status_val = trade.status.value if hasattr(trade.status, "value") else str(trade.status)
+    event = {
+        "OPEN": "OPEN",
+        "TP1_HIT": "TP1_HIT",
+        "CLOSED_TP": "TP2",
+        "CLOSED_SL": "SL",
+        "CLOSED_MANUAL": "MANUAL",
+    }.get(status_val, status_val)
+    try:
+        await tg_notifier.send_message(cfg, tg_notifier.render_trade_update(trade, event))
+    except Exception as e:  # noqa: BLE001
+        log.warning("notify.trade_failed", error=str(e))
 
 
 def _signal_dict(s: Signal) -> dict:
