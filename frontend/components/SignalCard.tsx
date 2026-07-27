@@ -205,9 +205,6 @@ export function SignalCard({
         >
           🔗 TradingView
         </a>
-        <span className="text-[10px] text-muted/60 ml-1">
-          Signals-only — no auto-execution
-        </span>
       </div>
 
       <div className="px-4 py-3 border-t border-border text-xs text-muted flex items-center justify-between">
