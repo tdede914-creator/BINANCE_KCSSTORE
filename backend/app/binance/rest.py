@@ -13,6 +13,36 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+
+
+class BinanceAPIError(httpx.HTTPStatusError):
+    """Wrapper around httpx errors that surfaces Binance's own code + msg.
+
+    Binance always returns ``{"code": <int>, "msg": <string>}`` on error;
+    ``str(e)`` on this exception yields something like
+    ``"Binance -2019: Margin is insufficient. (POST /fapi/v1/order)"``
+    which is what shows up in diagnostics + Telegram alerts.
+    """
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        binance_code: int | None,
+        binance_msg: str,
+        path: str,
+        request: httpx.Request,
+        response: httpx.Response,
+    ) -> None:
+        self.binance_code = binance_code
+        self.binance_msg = binance_msg
+        message = (
+            f"Binance {binance_code}: {binance_msg} "
+            f"({request.method} {path})"
+            if binance_code is not None
+            else f"Binance HTTP {status_code}: {binance_msg} ({path})"
+        )
+        super().__init__(message, request=request, response=response)
 import pandas as pd
 
 from app.core.config import settings
@@ -170,14 +200,39 @@ class BinanceREST:
         headers = {"X-MBX-APIKEY": api_key}
         r = await self._client.request(method, path, params=params, headers=headers)
         if r.status_code >= 400:
+            # Parse Binance's structured error body so downstream code (and
+            # user-facing diagnostics) show the actual reason instead of
+            # just "400 Bad Request for <url>". Binance always returns JSON
+            # like {"code": -1234, "msg": "human-readable text"} on error.
+            body_text = r.text
+            binance_code = None
+            binance_msg = None
+            try:
+                body_json = r.json()
+                binance_code = body_json.get("code")
+                binance_msg = body_json.get("msg")
+            except Exception:  # noqa: BLE001
+                pass
+
             log.error(
                 "binance.error",
                 status=r.status_code,
-                body=r.text,
+                code=binance_code,
+                msg=binance_msg,
+                body=body_text,
                 path=path,
                 method=method,
             )
-            r.raise_for_status()
+            # Raise with a readable payload embedded so callers logging
+            # str(e) get the useful part right away.
+            raise BinanceAPIError(
+                status_code=r.status_code,
+                binance_code=binance_code,
+                binance_msg=binance_msg or body_text,
+                path=path,
+                request=r.request,
+                response=r,
+            )
         return r.json()
 
     async def get_account(self, api_key: str, api_secret: str) -> dict:

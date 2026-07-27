@@ -125,24 +125,74 @@ class LiveExecutor(BaseExecutor):
         entry_order_id = str(entry_resp.get("orderId", ""))
 
         # 2) SL — STOP_MARKET closePosition
-        try:
-            sl_resp = await self.rest.place_order(
-                api_key,
-                api_secret,
-                symbol=symbol,
-                side=exit_side,
-                type="STOP_MARKET",
-                stopPrice=order.stop_loss,
-                closePosition="true",
-                workingType="MARK_PRICE",
-                priceProtect="true",
-                newOrderRespType="RESULT",
+        #
+        # We used to pass priceProtect="true" here; Binance rejected any
+        # SL whose stopPrice was within ~5 ticks of mark price, which is
+        # a very common case with ATR-based SLs on tight ranges. Result
+        # was: entry filled, SL rejected, panic-close, do it all again
+        # next tick — a loop that burned fees.
+        #
+        # We now:
+        #   - drop priceProtect so tight SLs are accepted
+        #   - format prices as strings (Binance is strict about float
+        #     representation on the wire; "0.07286" ok, "0.072860000000000001" not)
+        #   - retry once with a slightly wider SL if the first attempt
+        #     rejects for a price-related reason (-1111 = precision,
+        #     -2021 = would trigger immediately, -4131 = stop price too
+        #     close to mark price).
+        sl_price = _fmt_price(order.stop_loss, order.price_precision)
+        sl_resp = None
+        sl_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                sl_resp = await self.rest.place_order(
+                    api_key,
+                    api_secret,
+                    symbol=symbol,
+                    side=exit_side,
+                    type="STOP_MARKET",
+                    stopPrice=sl_price,
+                    closePosition="true",
+                    workingType="MARK_PRICE",
+                    newOrderRespType="RESULT",
+                )
+                sl_error = None
+                break
+            except Exception as e:  # noqa: BLE001
+                sl_error = e
+                # Only retry if the error looks like it could be helped
+                # by widening. Non-price errors (auth, permission) just
+                # fail through.
+                err_txt = str(e).lower()
+                retryable = any(
+                    marker in err_txt
+                    for marker in ("-2021", "-4131", "would immediately trigger", "price is not valid")
+                )
+                if attempt == 0 and retryable:
+                    # Widen SL by 5 ticks in the safer direction.
+                    widened = _widen_stop(
+                        float(sl_price), order.side, order.price_precision, ticks=5
+                    )
+                    log.warning(
+                        "live.sl_widen_retry",
+                        symbol=symbol,
+                        old=sl_price,
+                        new=widened,
+                        reason=str(e),
+                    )
+                    sl_price = widened
+                    continue
+                break
+
+        if sl_resp is None:
+            log.error("live.sl_failed", symbol=symbol, error=str(sl_error))
+            await self._emergency_close(
+                symbol, order.quantity, exit_side, api_key, api_secret
             )
-        except Exception as e:  # noqa: BLE001
-            log.error("live.sl_failed", symbol=symbol, error=str(e))
-            # Try emergency market close of the position.
-            await self._emergency_close(symbol, order.quantity, exit_side, api_key, api_secret)
-            return ExecutionResult(ok=False, error=f"SL failed, position closed: {e}")
+            return ExecutionResult(
+                ok=False,
+                error=f"SL failed, position closed: {sl_error}",
+            )
 
         sl_order_id = str(sl_resp.get("orderId", ""))
 
@@ -157,11 +207,10 @@ class LiveExecutor(BaseExecutor):
                     symbol=symbol,
                     side=exit_side,
                     type="TAKE_PROFIT_MARKET",
-                    stopPrice=order.take_profit_1,
+                    stopPrice=_fmt_price(order.take_profit_1, order.price_precision),
                     quantity=tp1_qty,
                     reduceOnly="true",
                     workingType="MARK_PRICE",
-                    priceProtect="true",
                     newOrderRespType="RESULT",
                 )
                 tp1_order_id = str(tp1_resp.get("orderId", ""))
@@ -177,10 +226,9 @@ class LiveExecutor(BaseExecutor):
                 symbol=symbol,
                 side=exit_side,
                 type="TAKE_PROFIT_MARKET",
-                stopPrice=order.take_profit_2,
+                stopPrice=_fmt_price(order.take_profit_2, order.price_precision),
                 closePosition="true",
                 workingType="MARK_PRICE",
-                priceProtect="true",
                 newOrderRespType="RESULT",
             )
             tp2_order_id = str(tp2_resp.get("orderId", ""))
@@ -452,10 +500,9 @@ class LiveExecutor(BaseExecutor):
                 symbol=trade.symbol,
                 side=exit_side,
                 type="STOP_MARKET",
-                stopPrice=new_stop_price,
+                stopPrice=_fmt_price(new_stop_price, trade.price_precision if hasattr(trade, "price_precision") else 6),
                 closePosition="true",
                 workingType="MARK_PRICE",
-                priceProtect="true",
                 newOrderRespType="RESULT",
             )
         except Exception as e:  # noqa: BLE001
@@ -509,6 +556,34 @@ class LiveExecutor(BaseExecutor):
 def _round_qty(qty: float, precision: int) -> float:
     factor = 10**precision
     return int(qty * factor) / factor
+
+
+def _fmt_price(price: float, precision: int) -> str:
+    """Format a price for Binance so we don't send float noise.
+
+    Binance rejects orders whose price string doesn't match the
+    symbol's PRICE_FILTER — 0.07286 is fine, but Python's default
+    ``str(0.07286)`` can also emit ``0.07286000000000001`` when the
+    float has representation noise. Formatting with a fixed number
+    of decimals guarantees a clean payload.
+    """
+    return f"{price:.{max(precision, 0)}f}"
+
+
+def _widen_stop(price: float, side: "Side", precision: int, ticks: int = 5) -> str:
+    """Move a stop price ``ticks`` ticks further from the entry.
+
+    For LONG (exit = SELL): SL is below entry, so a wider SL means a
+    LOWER price → subtract.
+    For SHORT (exit = BUY): SL is above entry, so a wider SL means a
+    HIGHER price → add.
+    """
+    from app.strategy.types import Side  # local import to avoid cycle
+    tick = 10 ** -precision
+    delta = ticks * tick
+    if side == Side.LONG:
+        return _fmt_price(price - delta, precision)
+    return _fmt_price(price + delta, precision)
 
 
 def _worth_moving(old_sl: float | None, new_sl: float | None, current_price: float) -> bool:
