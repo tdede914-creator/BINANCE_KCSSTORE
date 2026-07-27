@@ -60,6 +60,18 @@ class ConfigOut(BaseModel):
     adx_min: float
     volume_mult: float
 
+    # Strategy toggles
+    mtf_confluence_enabled: bool
+    range_breakout_enabled: bool
+
+    # Range Breakout params
+    rb_lookback: int
+    rb_max_range_pct: float
+    rb_atr_squeeze_ratio: float
+    rb_breakout_buffer: float
+    rb_measured_move_tp1: float
+    rb_measured_move_tp2: float
+
     # Trailing stop
     trailing_mode: TrailingMode
     trailing_activation_rr: float
@@ -95,6 +107,16 @@ class ConfigUpdate(BaseModel):
     adx_period: int | None = Field(default=None, ge=2, le=100)
     adx_min: float | None = Field(default=None, ge=0.0, le=60.0)
     volume_mult: float | None = Field(default=None, ge=0.0, le=5.0)
+
+    # Strategy toggles + Range Breakout params
+    mtf_confluence_enabled: bool | None = None
+    range_breakout_enabled: bool | None = None
+    rb_lookback: int | None = Field(default=None, ge=5, le=200)
+    rb_max_range_pct: float | None = Field(default=None, ge=0.1, le=20.0)
+    rb_atr_squeeze_ratio: float | None = Field(default=None, ge=0.1, le=2.0)
+    rb_breakout_buffer: float | None = Field(default=None, ge=0.0, le=2.0)
+    rb_measured_move_tp1: float | None = Field(default=None, ge=0.1, le=10.0)
+    rb_measured_move_tp2: float | None = Field(default=None, ge=0.1, le=20.0)
 
     # Trailing stop
     trailing_mode: TrailingMode | None = None
@@ -149,6 +171,14 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
         adx_period=cfg.adx_period,
         adx_min=cfg.adx_min,
         volume_mult=cfg.volume_mult,
+        mtf_confluence_enabled=cfg.mtf_confluence_enabled,
+        range_breakout_enabled=cfg.range_breakout_enabled,
+        rb_lookback=cfg.rb_lookback,
+        rb_max_range_pct=cfg.rb_max_range_pct,
+        rb_atr_squeeze_ratio=cfg.rb_atr_squeeze_ratio,
+        rb_breakout_buffer=cfg.rb_breakout_buffer,
+        rb_measured_move_tp1=cfg.rb_measured_move_tp1,
+        rb_measured_move_tp2=cfg.rb_measured_move_tp2,
         trailing_mode=cfg.trailing_mode,
         trailing_activation_rr=cfg.trailing_activation_rr,
         trailing_atr_mult=cfg.trailing_atr_mult,

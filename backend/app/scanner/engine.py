@@ -55,6 +55,7 @@ from app.risk.manager import RiskManager, RiskRejected
 from app.risk.trailing import TrailingConfig
 from app.strategy.indicators import atr as atr_series
 from app.strategy.mtf_confluence import MTFConfluenceStrategy
+from app.strategy.range_breakout import RangeBreakoutStrategy
 from app.strategy.types import SignalProposal, StrategyContext
 
 log = get_logger(__name__)
@@ -190,7 +191,21 @@ class ScannerEngine:
         if not cfg.scanner_enabled:
             return
 
-        strategy = MTFConfluenceStrategy(self._ctx_from_config(cfg))
+        # Build the list of strategies to try this tick. Each is a
+        # separate class implementing evaluate(); the scanner tries
+        # them in order and uses whichever fires first. MTF Confluence
+        # is checked first because it's more selective; Range Breakout
+        # picks up post-consolidation setups that MTF misses.
+        ctx = self._ctx_from_config(cfg)
+        strategies: list = []
+        if cfg.mtf_confluence_enabled:
+            strategies.append(MTFConfluenceStrategy(ctx))
+        if cfg.range_breakout_enabled:
+            strategies.append(RangeBreakoutStrategy(ctx))
+        if not strategies:
+            log.debug("scanner.no_strategies_enabled")
+            return
+
         watchlist_csv = (
             cfg.forex_watchlist_csv
             if cfg.market_mode == MarketMode.FOREX
@@ -213,7 +228,7 @@ class ScannerEngine:
             if self._stop.is_set():
                 break
             try:
-                await self._scan_one(symbol, cfg, strategy, source)
+                await self._scan_one(symbol, cfg, strategies, source)
             except Exception as e:  # noqa: BLE001
                 log.warning("scanner.symbol_error", symbol=symbol, error=str(e))
                 # If the strategy already advanced diag to 'fired' but the
@@ -233,7 +248,7 @@ class ScannerEngine:
         self,
         symbol: str,
         cfg: UserConfig,
-        strategy: MTFConfluenceStrategy,
+        strategies: list,
         source: MarketDataSource,
     ) -> None:
         # Skip if there's already an open trade for this symbol (crypto only).
@@ -249,17 +264,46 @@ class ScannerEngine:
             source.get_klines(symbol, cfg.entry_tf, limit=200),
         )
 
-        proposal, diag = strategy.evaluate(
-            symbol,
-            bias_df=bias_df,
-            setup_df=setup_df,
-            entry_df=entry_df,
-            bias_tf=cfg.bias_tf,
-            setup_tf=cfg.setup_tf,
-            entry_tf=cfg.entry_tf,
-        )
+        # Try each enabled strategy; first hit wins. Diagnostics per
+        # strategy are aggregated so the UI can show why each one
+        # didn't fire this tick.
+        proposal: SignalProposal | None = None
+        diag: dict = {}
+        per_strategy_diag: list[dict] = []
+        for strat in strategies:
+            strat_name = getattr(strat, "STRATEGY_NAME", type(strat).__name__)
+            p, d = strat.evaluate(
+                symbol,
+                bias_df=bias_df,
+                setup_df=setup_df,
+                entry_df=entry_df,
+                bias_tf=cfg.bias_tf,
+                setup_tf=cfg.setup_tf,
+                entry_tf=cfg.entry_tf,
+            )
+            per_strategy_diag.append(
+                {
+                    "strategy": strat_name,
+                    "stage": d.get("stage"),
+                    "reason": d.get("reason"),
+                }
+            )
+            if p is not None:
+                proposal = p
+                # Merge the winning strategy's diagnostics as the
+                # top-level view + tag it.
+                diag = {**d}
+                diag["fired_by"] = strat_name
+                break
+
+        # If no strategy fired, keep the last one's diag as the panel
+        # summary (so users see the closest-to-firing reasoning) plus
+        # the full per-strategy breakdown.
+        if proposal is None and per_strategy_diag:
+            diag = per_strategy_diag[-1].copy()
         diag["ts"] = datetime.now(tz=timezone.utc).isoformat()
         diag["market"] = cfg.market_mode.value
+        diag["strategies"] = per_strategy_diag
         self._diagnostics[symbol] = diag
 
         if proposal is None:
@@ -435,6 +479,12 @@ class ScannerEngine:
             adx_period=cfg.adx_period,
             adx_min=cfg.adx_min,
             volume_mult=cfg.volume_mult,
+            rb_lookback=cfg.rb_lookback,
+            rb_max_range_pct=cfg.rb_max_range_pct,
+            rb_atr_squeeze_ratio=cfg.rb_atr_squeeze_ratio,
+            rb_breakout_buffer=cfg.rb_breakout_buffer,
+            rb_measured_move_tp1=cfg.rb_measured_move_tp1,
+            rb_measured_move_tp2=cfg.rb_measured_move_tp2,
         )
 
     def _executor_for(self, cfg: UserConfig) -> BaseExecutor:
@@ -587,6 +637,7 @@ class ScannerEngine:
             confidence=proposal.confidence,
             reason=proposal.reason + f" | CANCELLED: {reason}",
             diagnostics=_json_safe(proposal.diagnostics),
+            strategy=proposal.strategy,
         )
         async with session_scope() as session:
             session.add(signal)
@@ -617,6 +668,7 @@ class ScannerEngine:
             confidence=proposal.confidence,
             reason=proposal.reason + " | forex signal (manual execution)",
             diagnostics=_json_safe(proposal.diagnostics),
+            strategy=proposal.strategy,
         )
         async with session_scope() as session:
             session.add(signal)
@@ -654,6 +706,7 @@ class ScannerEngine:
                     else {},
                 }
             ),
+            strategy=proposal.strategy,
         )
         async with session_scope() as session:
             session.add(signal)
@@ -685,6 +738,7 @@ def _signal_dict(s: Signal) -> dict:
         "confidence": s.confidence,
         "reason": s.reason,
         "trade_id": s.trade_id,
+        "strategy": getattr(s, "strategy", "mtf_confluence"),
     }
 
 

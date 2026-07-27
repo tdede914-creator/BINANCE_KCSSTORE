@@ -37,6 +37,11 @@ class SignalProposal:
     confidence: float  # 0..1
     reason: str = ""
     diagnostics: dict = field(default_factory=dict)
+    # Which strategy generated this signal. Free-form string so we can
+    # add new strategies without touching an enum. Currently:
+    #   "mtf_confluence" — trend-following pullback (our original)
+    #   "range_breakout" — post-consolidation breakout (new)
+    strategy: str = "mtf_confluence"
 
 
 @dataclass(slots=True)
@@ -65,3 +70,27 @@ class StrategyContext:
     # ``volume_mult`` × its 20-period average. 1.0 = must beat average,
     # 1.5 = spike required, 0 = disable.
     volume_mult: float = 1.2
+
+    # -----------------------------------------------------------------
+    # Range Breakout strategy parameters
+    # -----------------------------------------------------------------
+    # Number of bars on the entry TF to consider when defining the
+    # consolidation range. 30 @ 5m = 2.5h box, 30 @ 15m = 7.5h box.
+    rb_lookback: int = 30
+
+    # Range height must be at most this % of current price. Wider ranges
+    # imply the market wasn't really "consolidating" — reject.
+    rb_max_range_pct: float = 3.0
+
+    # Volatility squeeze detector: current ATR / MA(ATR, 50) must be
+    # below this ratio for the range to count. 0.7 = ATR is now 30%
+    # lower than usual → true squeeze.
+    rb_atr_squeeze_ratio: float = 0.7
+
+    # Breakout confirmation buffer: entry candle close must exceed the
+    # range top / bottom by ``rb_breakout_buffer × ATR`` — anti-wick.
+    rb_breakout_buffer: float = 0.1
+
+    # Measured-move TPs — height of the broken range projected.
+    rb_measured_move_tp1: float = 1.0
+    rb_measured_move_tp2: float = 1.5

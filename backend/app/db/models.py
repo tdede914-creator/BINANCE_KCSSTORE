@@ -163,6 +163,22 @@ class UserConfig(SQLModel, table=True):
     # times its 20-bar moving average. 0 disables the check.
     volume_mult: float = Field(default=1.2)
 
+    # ------------------------------------------------------------
+    # Which strategies the scanner runs. Both default ON so the bot
+    # can catch both trending pullbacks (MTF Confluence) and
+    # post-consolidation breakouts (Range Breakout).
+    # ------------------------------------------------------------
+    mtf_confluence_enabled: bool = Field(default=True)
+    range_breakout_enabled: bool = Field(default=True)
+
+    # Range Breakout specific params (see StrategyContext for docs).
+    rb_lookback: int = Field(default=30)
+    rb_max_range_pct: float = Field(default=3.0)
+    rb_atr_squeeze_ratio: float = Field(default=0.7)
+    rb_breakout_buffer: float = Field(default=0.1)
+    rb_measured_move_tp1: float = Field(default=1.0)
+    rb_measured_move_tp2: float = Field(default=1.5)
+
     # Trailing stop
     trailing_mode: TrailingMode = Field(default=TrailingMode.OFF)
     # RR (in units of initial risk) that price must move in favor before
@@ -218,6 +234,12 @@ class Signal(SQLModel, table=True):
 
     # Diagnostics dict (indicator snapshots)
     diagnostics: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    # Which strategy fired this signal — free-form string so we can add
+    # new strategies without an enum migration. Legacy rows without
+    # this column default to "mtf_confluence" (via the additive
+    # migration in database.py).
+    strategy: str = Field(default="mtf_confluence", index=True)
 
     # Correlated trade
     trade_id: Optional[int] = Field(default=None, foreign_key="trades.id", index=True)

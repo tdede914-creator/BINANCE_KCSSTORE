@@ -60,6 +60,13 @@ class BacktestRequest(BaseModel):
     strategy_params: BacktestStrategyParams = Field(
         default_factory=BacktestStrategyParams
     )
+    # Which strategies to enable. Default = both (matches live scanner
+    # after a fresh install). Pass e.g. ["mtf_confluence"] to backtest
+    # only the trend-following logic, or ["range_breakout"] to isolate
+    # the breakout logic.
+    strategies: list[str] = Field(
+        default_factory=lambda: ["mtf_confluence", "range_breakout"]
+    )
 
 
 class FillOut(BaseModel):
@@ -146,6 +153,7 @@ async def run_backtest(body: BacktestRequest) -> BacktestResponse:
         risk_per_trade_pct=body.risk_per_trade_pct,
         leverage=body.leverage,
         strategy_ctx=ctx,
+        strategies=tuple(body.strategies),
     )
 
     log.info(
@@ -203,6 +211,9 @@ class BatchBacktestRequest(BaseModel):
     leverage: int = Field(5, ge=1, le=125)
     strategy_params: BacktestStrategyParams = Field(
         default_factory=BacktestStrategyParams
+    )
+    strategies: list[str] = Field(
+        default_factory=lambda: ["mtf_confluence", "range_breakout"]
     )
 
 
@@ -295,6 +306,7 @@ async def run_batch(body: BatchBacktestRequest) -> BatchBacktestResponse:
             risk_per_trade_pct=body.risk_per_trade_pct,
             leverage=body.leverage,
             strategy_ctx=ctx,
+            strategies=tuple(body.strategies),
         )
         try:
             result = await engine.run(cfg)

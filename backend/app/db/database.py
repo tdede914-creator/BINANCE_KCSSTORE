@@ -52,6 +52,17 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("user_config", "adx_period", "INTEGER NOT NULL DEFAULT 14"),
     ("user_config", "adx_min", "DOUBLE PRECISION NOT NULL DEFAULT 20.0"),
     ("user_config", "volume_mult", "DOUBLE PRECISION NOT NULL DEFAULT 1.2"),
+    # Multi-strategy toggles + Range Breakout params.
+    ("user_config", "mtf_confluence_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+    ("user_config", "range_breakout_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+    ("user_config", "rb_lookback", "INTEGER NOT NULL DEFAULT 30"),
+    ("user_config", "rb_max_range_pct", "DOUBLE PRECISION NOT NULL DEFAULT 3.0"),
+    ("user_config", "rb_atr_squeeze_ratio", "DOUBLE PRECISION NOT NULL DEFAULT 0.7"),
+    ("user_config", "rb_breakout_buffer", "DOUBLE PRECISION NOT NULL DEFAULT 0.1"),
+    ("user_config", "rb_measured_move_tp1", "DOUBLE PRECISION NOT NULL DEFAULT 1.0"),
+    ("user_config", "rb_measured_move_tp2", "DOUBLE PRECISION NOT NULL DEFAULT 1.5"),
+    # Signal.strategy — used to filter historical signals per strategy.
+    ("signals", "strategy", "VARCHAR NOT NULL DEFAULT 'mtf_confluence'"),
 )
 
 

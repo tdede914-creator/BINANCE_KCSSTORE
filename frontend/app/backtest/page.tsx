@@ -66,6 +66,15 @@ export default function BacktestPage() {
   const [initialBalance, setInitialBalance] = useState(1000);
   const [riskPct, setRiskPct] = useState(1.0);
   const [leverage, setLeverage] = useState(5);
+  const [enabledStrategies, setEnabledStrategies] = useState<string[]>([
+    "mtf_confluence",
+    "range_breakout",
+  ]);
+  const toggleStrategy = (name: string) => {
+    setEnabledStrategies((prev) =>
+      prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name],
+    );
+  };
 
   const parsedSymbols = useMemo(
     () =>
@@ -86,6 +95,9 @@ export default function BacktestPage() {
     setResult(null);
     setBatchResult(null);
     try {
+      if (enabledStrategies.length === 0) {
+        throw new Error("Enable at least one strategy before running.");
+      }
       if (mode === "batch") {
         if (parsedSymbols.length === 0) {
           throw new Error("Batch symbols list is empty.");
@@ -99,6 +111,7 @@ export default function BacktestPage() {
           initial_balance: initialBalance,
           risk_per_trade_pct: riskPct,
           leverage,
+          strategies: enabledStrategies,
         };
         const resp = await api.runBatchBacktest(req);
         setBatchResult(resp);
@@ -112,6 +125,7 @@ export default function BacktestPage() {
           initial_balance: initialBalance,
           risk_per_trade_pct: riskPct,
           leverage,
+          strategies: enabledStrategies,
         };
         const resp = await api.runBacktest(req);
         setResult(resp);
@@ -135,7 +149,7 @@ export default function BacktestPage() {
       </div>
 
       {/* Mode toggle */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={() => setMode("single")}
           disabled={running}
@@ -165,6 +179,37 @@ export default function BacktestPage() {
             · {parsedSymbols.length} symbol{parsedSymbols.length === 1 ? "" : "s"} queued (max 20)
           </span>
         )}
+      </div>
+
+      {/* Strategy chips */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted">Strategies:</span>
+        {[
+          { id: "mtf_confluence", label: "MTF Confluence", hint: "trend pullback" },
+          { id: "range_breakout", label: "Range Breakout", hint: "consolidation break" },
+        ].map((s) => {
+          const active = enabledStrategies.includes(s.id);
+          return (
+            <button
+              key={s.id}
+              onClick={() => toggleStrategy(s.id)}
+              disabled={running}
+              title={s.hint}
+              className={clsx(
+                "px-2.5 py-1 rounded text-[11px] font-mono border transition-colors",
+                active
+                  ? "bg-long/15 border-long/50 text-long"
+                  : "bg-bg-soft border-border text-muted hover:text-white",
+              )}
+            >
+              {active ? "✓ " : ""}
+              {s.label}
+            </button>
+          );
+        })}
+        <span className="text-[10px] text-muted/60 ml-1">
+          Tip: isolate one strategy to see its individual contribution.
+        </span>
       </div>
 
       {/* Form */}

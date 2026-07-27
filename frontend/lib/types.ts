@@ -46,6 +46,16 @@ export interface Config {
   adx_period: number;
   adx_min: number;
   volume_mult: number;
+  // Strategy toggles
+  mtf_confluence_enabled: boolean;
+  range_breakout_enabled: boolean;
+  // Range Breakout params
+  rb_lookback: number;
+  rb_max_range_pct: number;
+  rb_atr_squeeze_ratio: number;
+  rb_breakout_buffer: number;
+  rb_measured_move_tp1: number;
+  rb_measured_move_tp2: number;
   // Trailing stop
   trailing_mode: TrailingMode;
   trailing_activation_rr: number;
@@ -75,6 +85,7 @@ export interface Signal {
   reason: string;
   diagnostics: Record<string, unknown>;
   trade_id: number | null;
+  strategy?: string;
 }
 
 export interface Trade {

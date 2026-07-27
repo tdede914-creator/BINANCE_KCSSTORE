@@ -588,6 +588,125 @@ export default function SettingsPage() {
         </div>
       </Section>
 
+      {/* Strategies enabled + Range Breakout params */}
+      <Section
+        title="Active strategies"
+        hint="Which strategy engines the scanner runs each tick. Both on = MTF Confluence tried first (trend pullback), then Range Breakout picks up any post-consolidation setups it missed."
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="flex items-start gap-2 p-3 bg-bg-soft border border-border rounded cursor-pointer">
+            <input
+              type="checkbox"
+              checked={cfg.mtf_confluence_enabled}
+              onChange={(e) => patch({ mtf_confluence_enabled: e.target.checked })}
+              className="mt-0.5"
+            />
+            <div>
+              <div className="text-sm font-semibold">MTF Confluence</div>
+              <div className="text-xs text-muted mt-1">
+                Trend-following pullback. Needs bias EMA alignment across 4h/1h + entry retest. Best in trending markets.
+              </div>
+            </div>
+          </label>
+          <label className="flex items-start gap-2 p-3 bg-bg-soft border border-border rounded cursor-pointer">
+            <input
+              type="checkbox"
+              checked={cfg.range_breakout_enabled}
+              onChange={(e) => patch({ range_breakout_enabled: e.target.checked })}
+              className="mt-0.5"
+            />
+            <div>
+              <div className="text-sm font-semibold">Range Breakout</div>
+              <div className="text-xs text-muted mt-1">
+                Post-consolidation directional break. Fires LONG or SHORT depending on which side of the box gives way. Best in ranging → expansion phases.
+              </div>
+            </div>
+          </label>
+        </div>
+      </Section>
+
+      {cfg.range_breakout_enabled && (
+        <Section
+          title="Range Breakout parameters"
+          hint="Tune what qualifies as a 'consolidation ready to break'. Higher squeeze ratio and shorter lookback = more sensitive."
+        >
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <Field
+              label="Lookback (bars)"
+              hint="Bars used to define the box. 30 @ 5m = 2.5h box; 30 @ 15m = 7.5h."
+            >
+              <NumberInput
+                value={cfg.rb_lookback}
+                onCommit={(v) => patch({ rb_lookback: v })}
+                step={1}
+                min={5}
+                max={200}
+              />
+            </Field>
+            <Field
+              label="Max range width (%)"
+              hint="Range height as % of price — bigger = looser 'consolidation'. 3% is typical."
+            >
+              <NumberInput
+                value={cfg.rb_max_range_pct}
+                onCommit={(v) => patch({ rb_max_range_pct: v })}
+                step={0.1}
+                min={0.1}
+                max={20}
+              />
+            </Field>
+            <Field
+              label="ATR squeeze ratio"
+              hint="ATR now ÷ ATR MA(50). Below this = 'compressed'. 0.7 = 30% below usual volatility."
+            >
+              <NumberInput
+                value={cfg.rb_atr_squeeze_ratio}
+                onCommit={(v) => patch({ rb_atr_squeeze_ratio: v })}
+                step={0.05}
+                min={0.1}
+                max={2}
+              />
+            </Field>
+            <Field
+              label="Breakout buffer (× ATR)"
+              hint="How far past the level the close must be — filters wicks. 0.1 = 10% of ATR."
+            >
+              <NumberInput
+                value={cfg.rb_breakout_buffer}
+                onCommit={(v) => patch({ rb_breakout_buffer: v })}
+                step={0.05}
+                min={0}
+                max={2}
+              />
+            </Field>
+            <Field
+              label="TP1 (× range height)"
+              hint="Measured-move target. 1.0 = same distance as the box was tall."
+            >
+              <NumberInput
+                value={cfg.rb_measured_move_tp1}
+                onCommit={(v) => patch({ rb_measured_move_tp1: v })}
+                step={0.1}
+                min={0.1}
+                max={10}
+              />
+            </Field>
+            <Field
+              label="TP2 (× range height)"
+              hint="Runner target. 1.5 = 1.5× the box height."
+            >
+              <NumberInput
+                value={cfg.rb_measured_move_tp2}
+                onCommit={(v) => patch({ rb_measured_move_tp2: v })}
+                step={0.1}
+                min={0.1}
+                max={20}
+              />
+            </Field>
+          </div>
+        </Section>
+      )}
+
       {/* Regime / volume filters */}
       <Section
         title="Regime & volume filters"

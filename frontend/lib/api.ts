@@ -104,6 +104,7 @@ export interface BacktestRequest {
   risk_per_trade_pct?: number;
   leverage?: number;
   strategy_params?: BacktestStrategyParams;
+  strategies?: string[];
 }
 
 export interface BacktestFill {
@@ -181,6 +182,7 @@ export interface BatchBacktestRequest {
   risk_per_trade_pct?: number;
   leverage?: number;
   strategy_params?: BacktestStrategyParams;
+  strategies?: string[];
 }
 
 export interface BatchBacktestSummary {

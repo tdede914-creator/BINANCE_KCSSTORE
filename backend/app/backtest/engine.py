@@ -32,6 +32,7 @@ from app.binance.rest import BinanceREST
 from app.core.logging import get_logger
 from app.strategy.indicators import enrich as _enrich_indicators
 from app.strategy.mtf_confluence import MTFConfluenceStrategy
+from app.strategy.range_breakout import RangeBreakoutStrategy
 from app.strategy.types import Side, SignalProposal, StrategyContext
 
 log = get_logger(__name__)
@@ -55,6 +56,11 @@ class BacktestConfig:
     risk_per_trade_pct: float = 1.0
     leverage: int = 5
     strategy_ctx: StrategyContext = field(default_factory=StrategyContext)
+    # Which strategies to run: any subset of
+    # ("mtf_confluence", "range_breakout"). If both are listed we try
+    # them in order and take whichever fires first — same rule as the
+    # live scanner.
+    strategies: tuple[str, ...] = ("mtf_confluence", "range_breakout")
 
 
 @dataclass(slots=True)
@@ -280,7 +286,18 @@ class BacktestEngine:
         )
         log.info("backtest.indicators_precomputed", symbol=cfg.symbol)
 
-        strategy = MTFConfluenceStrategy(cfg.strategy_ctx)
+        # Instantiate the selected strategies once and reuse across
+        # every candle. Order in cfg.strategies determines priority
+        # when multiple are enabled: MTF Confluence first (more
+        # selective), then Range Breakout, matching the live scanner.
+        registry = {
+            "mtf_confluence": MTFConfluenceStrategy(cfg.strategy_ctx),
+            "range_breakout": RangeBreakoutStrategy(cfg.strategy_ctx),
+        }
+        strategies_list = [registry[name] for name in cfg.strategies if name in registry]
+        if not strategies_list:
+            # Fallback so old callers that don't set cfg.strategies still work.
+            strategies_list = [registry["mtf_confluence"]]
         trades: list[SimTrade] = []
         open_trade: SimTrade | None = None
         equity = cfg.initial_balance
@@ -339,15 +356,20 @@ class BacktestEngine:
                 if len(entry_slice) < 60:
                     continue
 
-                proposal, _diag = strategy.evaluate(
-                    cfg.symbol,
-                    bias_df=bias_slice,
-                    setup_df=setup_slice,
-                    entry_df=entry_slice,
-                    bias_tf=cfg.bias_tf,
-                    setup_tf=cfg.setup_tf,
-                    entry_tf=cfg.entry_tf,
-                )
+                proposal = None
+                for strat in strategies_list:
+                    p, _diag = strat.evaluate(
+                        cfg.symbol,
+                        bias_df=bias_slice,
+                        setup_df=setup_slice,
+                        entry_df=entry_slice,
+                        bias_tf=cfg.bias_tf,
+                        setup_tf=cfg.setup_tf,
+                        entry_tf=cfg.entry_tf,
+                    )
+                    if p is not None:
+                        proposal = p
+                        break
                 if proposal is None:
                     continue
 
