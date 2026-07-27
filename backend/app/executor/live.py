@@ -124,138 +124,38 @@ class LiveExecutor(BaseExecutor):
         entry_price = float(entry_resp.get("avgPrice") or order.entry_price)
         entry_order_id = str(entry_resp.get("orderId", ""))
 
-        # 2) SL — STOP_MARKET closePosition
+        # -------------------------------------------------------------
+        # Software SL / TP — we intentionally DO NOT place STOP_MARKET /
+        # TAKE_PROFIT_MARKET orders on Binance any more.
         #
-        # We used to pass priceProtect="true" here; Binance rejected any
-        # SL whose stopPrice was within ~5 ticks of mark price, which is
-        # a very common case with ATR-based SLs on tight ranges. Result
-        # was: entry filled, SL rejected, panic-close, do it all again
-        # next tick — a loop that burned fees.
+        # Binance's late-2024 policy started rejecting these order
+        # types on POST /fapi/v1/order with error -4120 ("Order type
+        # not supported for this endpoint. Please use the Algo Order
+        # API endpoints instead.") — even with reduceOnly=true. That
+        # would loop: entry fills, SL rejects, emergency-close, bleed
+        # fees, repeat. Users lost real money to that loop.
         #
-        # We now:
-        #   - drop priceProtect so tight SLs are accepted
-        #   - format prices as strings (Binance is strict about float
-        #     representation on the wire; "0.07286" ok, "0.072860000000000001" not)
-        #   - retry once with a slightly wider SL if the first attempt
-        #     rejects for a price-related reason (-1111 = precision,
-        #     -2021 = would trigger immediately, -4131 = stop price too
-        #     close to mark price).
-        # We used to send STOP_MARKET + closePosition=true, which some
-        # Binance accounts have started rejecting with -4120 ("Order type
-        # not supported for this endpoint. Please use the Algo Order API
-        # endpoint instead."). Binance moved conditional-close orders to
-        # a separate /fapi/v1/algo/ endpoint for those accounts.
+        # Instead we monitor price ourselves in `check_open_trades`
+        # (identical to the PaperExecutor code path) and issue a
+        # MARKET reduceOnly close when SL / TP1 / TP2 is crossed.
+        # MARKET orders are Binance's most basic type and are never
+        # rejected with -4120.
         #
-        # Switching to reduceOnly=true + explicit quantity keeps us on the
-        # normal /fapi/v1/order endpoint and is functionally equivalent:
-        #   * reduceOnly means the order can only reduce (never open) a
-        #     position, so it's safe if TP1 already closed half.
-        #   * We size SL/TP2 to the FULL position quantity — Binance
-        #     will only close what's currently on the books, so a
-        #     partial fill after TP1 hit is handled cleanly.
-        sl_price = _fmt_price(order.stop_loss, order.price_precision)
-        sl_qty = order.quantity
-        sl_resp = None
-        sl_error: Exception | None = None
-        for attempt in range(2):
-            try:
-                sl_resp = await self.rest.place_order(
-                    api_key,
-                    api_secret,
-                    symbol=symbol,
-                    side=exit_side,
-                    type="STOP_MARKET",
-                    stopPrice=sl_price,
-                    quantity=sl_qty,
-                    reduceOnly="true",
-                    workingType="MARK_PRICE",
-                    newOrderRespType="RESULT",
-                )
-                sl_error = None
-                break
-            except Exception as e:  # noqa: BLE001
-                sl_error = e
-                # Only retry if the error looks like it could be helped
-                # by widening. Non-price errors (auth, permission) just
-                # fail through.
-                err_txt = str(e).lower()
-                retryable = any(
-                    marker in err_txt
-                    for marker in ("-2021", "-4131", "would immediately trigger", "price is not valid")
-                )
-                if attempt == 0 and retryable:
-                    # Widen SL by 5 ticks in the safer direction.
-                    widened = _widen_stop(
-                        float(sl_price), order.side, order.price_precision, ticks=5
-                    )
-                    log.warning(
-                        "live.sl_widen_retry",
-                        symbol=symbol,
-                        old=sl_price,
-                        new=widened,
-                        reason=str(e),
-                    )
-                    sl_price = widened
-                    continue
-                break
-
-        if sl_resp is None:
-            log.error("live.sl_failed", symbol=symbol, error=str(sl_error))
-            await self._emergency_close(
-                symbol, order.quantity, exit_side, api_key, api_secret
-            )
-            return ExecutionResult(
-                ok=False,
-                error=f"SL failed, position closed: {sl_error}",
-            )
-
-        sl_order_id = str(sl_resp.get("orderId", ""))
-
-        # 3) TP1 — TAKE_PROFIT_MARKET reduceOnly, 50%
-        tp1_qty = _round_qty(order.quantity / 2, order.quantity_precision)
+        # Trade-offs:
+        #   +  Never -4120 again. Never fee-bleed loop.
+        #   +  Same code path as paper mode, easier to reason about.
+        #   -  If the bot process dies, the position has no on-chain
+        #      stop — the user must know this risk. Circuit breaker,
+        #      restart-on-crash, and Telegram alerts keep the window
+        #      of exposure small.
+        #   -  ~1-2 seconds slippage on close vs on-exchange stop.
+        #
+        # For the $10-$100 paper-transitioning-to-live use case this
+        # trade-off is very much worth it.
+        # -------------------------------------------------------------
+        sl_order_id = ""
         tp1_order_id = ""
-        if tp1_qty > 0:
-            try:
-                tp1_resp = await self.rest.place_order(
-                    api_key,
-                    api_secret,
-                    symbol=symbol,
-                    side=exit_side,
-                    type="TAKE_PROFIT_MARKET",
-                    stopPrice=_fmt_price(order.take_profit_1, order.price_precision),
-                    quantity=tp1_qty,
-                    reduceOnly="true",
-                    workingType="MARK_PRICE",
-                    newOrderRespType="RESULT",
-                )
-                tp1_order_id = str(tp1_resp.get("orderId", ""))
-            except Exception as e:  # noqa: BLE001
-                log.warning("live.tp1_failed", symbol=symbol, error=str(e))
-
-        # 4) TP2 — TAKE_PROFIT_MARKET reduceOnly (not closePosition — same
-        # -4120 concern as SL). We size TP2 to remaining position (half
-        # of original if TP1 hasn't hit, or all of it if TP1 already did).
-        # reduceOnly caps the fill at whatever's actually open, so the
-        # math takes care of itself.
-        tp2_qty = order.quantity - tp1_qty if tp1_qty > 0 else order.quantity
         tp2_order_id = ""
-        if tp2_qty > 0:
-            try:
-                tp2_resp = await self.rest.place_order(
-                    api_key,
-                    api_secret,
-                    symbol=symbol,
-                    side=exit_side,
-                    type="TAKE_PROFIT_MARKET",
-                    stopPrice=_fmt_price(order.take_profit_2, order.price_precision),
-                    quantity=tp2_qty,
-                    reduceOnly="true",
-                    workingType="MARK_PRICE",
-                    newOrderRespType="RESULT",
-                )
-                tp2_order_id = str(tp2_resp.get("orderId", ""))
-            except Exception as e:  # noqa: BLE001
-                log.warning("live.tp2_failed", symbol=symbol, error=str(e))
 
         # 5) Persist
         trade = Trade(
@@ -359,11 +259,16 @@ class LiveExecutor(BaseExecutor):
     # ------------------------------------------------------------------
 
     async def check_open_trades(self, current_prices: dict[str, float]) -> list[Trade]:
-        """Reconcile local trade state with Binance:
+        """Software SL/TP monitor for LIVE positions.
 
-        1. Detect closed positions → set status + exit price.
-        2. On TP1 fill → move SL to break-even (only if trailing off).
-        3. Trailing stop → move SL if the manager says so.
+        Since we no longer place on-exchange stop orders (Binance -4120),
+        we watch prices ourselves and close positions with MARKET
+        reduceOnly orders when SL / TP1 / TP2 are crossed. Behaviour
+        mirrors PaperExecutor.check_open_trades exactly, just wired to
+        real Binance orders instead of DB updates.
+
+        Trailing stop: if enabled, adjust the (in-memory) SL price on
+        each tick — no on-exchange cancel-and-replace needed.
         """
         try:
             api_key, api_secret = await self._creds()
@@ -381,69 +286,140 @@ class LiveExecutor(BaseExecutor):
             open_trades = list(result.scalars().all())
 
         for trade in open_trades:
+            price = current_prices.get(trade.symbol)
+            if price is None:
+                continue
             try:
-                open_orders = await self.rest.get_open_orders(
-                    trade.symbol, api_key, api_secret
+                is_long = trade.side == Side.LONG.value or trade.side == "LONG"
+                exit_side_str = "SELL" if is_long else "BUY"
+
+                # ---- Update trailing (highest/lowest since entry) ----
+                if is_long:
+                    trade.highest_price = max(trade.highest_price or price, price)
+                else:
+                    trade.lowest_price = min(trade.lowest_price or price, price)
+
+                # ---- SL hit ? ----
+                sl_hit = (
+                    (is_long and price <= trade.stop_loss)
+                    or ((not is_long) and price >= trade.stop_loss)
                 )
-                order_ids = {str(o["orderId"]) for o in open_orders}
-
-                sl_still_open = trade.sl_order_id in order_ids
-                tp1_still_open = bool(trade.tp1_order_id) and trade.tp1_order_id in order_ids
-                tp2_still_open = bool(trade.tp2_order_id) and trade.tp2_order_id in order_ids
-
-                # -------- 1) Closed position ? --------
-                position = await self.rest.get_position(trade.symbol, api_key, api_secret)
-                pos_amt = float(position.get("positionAmt", 0)) if position else 0.0
-
-                if abs(pos_amt) < 1e-9:
-                    if not sl_still_open and trade.status == SignalStatus.OPEN:
-                        # SL fired
-                        if trade.trailing_active and trade.trailing_mode != TrailingMode.OFF:
-                            trade.status = SignalStatus.CLOSED_TP     # trailing-locked profit
-                            trade.notes = "live: trailing-SL exit"
-                        else:
-                            trade.status = SignalStatus.CLOSED_SL
-                        trade.exit_price = trade.stop_loss
-                    elif not tp2_still_open:
-                        trade.status = SignalStatus.CLOSED_TP
-                        trade.exit_price = trade.take_profit_2
-                    else:
-                        trade.status = SignalStatus.CLOSED_MANUAL
-
+                if sl_hit:
+                    await self._market_close(
+                        trade, api_key, api_secret,
+                        qty=trade.quantity if trade.status == SignalStatus.OPEN
+                        else _round_qty(trade.quantity / 2, trade.quantity_precision or 3),
+                        exit_side=exit_side_str,
+                    )
+                    trade.exit_price = trade.stop_loss
                     trade.closed_at = datetime.now(tz=timezone.utc)
+                    if trade.trailing_active and trade.trailing_mode != TrailingMode.OFF:
+                        trade.status = SignalStatus.CLOSED_TP
+                        trade.notes = "live: trailing-SL exit"
+                    else:
+                        trade.status = SignalStatus.CLOSED_SL
                     changed.append(trade)
                     await _persist(trade)
                     continue
 
-                # -------- 2) TP1 filled ? --------
-                if (
-                    trade.status == SignalStatus.OPEN
-                    and trade.tp1_order_id
-                    and not tp1_still_open
-                    and sl_still_open
-                ):
-                    if trade.trailing_mode == TrailingMode.OFF:
-                        # Legacy break-even move
-                        await self._move_sl_to(trade, trade.entry_price, api_key, api_secret)
-                        trade.notes = "live: TP1 hit, SL moved to BE"
-                    else:
-                        trade.notes = "live: TP1 hit, trailing SL active"
-                    trade.status = SignalStatus.TP1_HIT
-                    changed.append(trade)
-                    await _persist(trade)
-
-                # -------- 3) Trailing update --------
-                if trade.trailing_mode != TrailingMode.OFF:
-                    moved = await self._apply_trailing(
-                        trade, current_prices.get(trade.symbol), api_key, api_secret
+                # ---- TP2 hit (only when TP1 already gone) ? ----
+                if trade.status == SignalStatus.TP1_HIT:
+                    tp2_hit = (
+                        (is_long and price >= trade.take_profit_2)
+                        or ((not is_long) and price <= trade.take_profit_2)
                     )
-                    if moved and trade not in changed:
+                    if tp2_hit:
+                        remaining = _round_qty(
+                            trade.quantity / 2, trade.quantity_precision or 3
+                        )
+                        await self._market_close(
+                            trade, api_key, api_secret,
+                            qty=remaining, exit_side=exit_side_str,
+                        )
+                        trade.exit_price = trade.take_profit_2
+                        trade.status = SignalStatus.CLOSED_TP
+                        trade.closed_at = datetime.now(tz=timezone.utc)
                         changed.append(trade)
+                        await _persist(trade)
+                        continue
+
+                # ---- TP1 hit ? (partial close + move SL to BE) ----
+                if trade.status == SignalStatus.OPEN:
+                    tp1_hit = (
+                        (is_long and price >= trade.take_profit_1)
+                        or ((not is_long) and price <= trade.take_profit_1)
+                    )
+                    if tp1_hit:
+                        half = _round_qty(
+                            trade.quantity / 2, trade.quantity_precision or 3
+                        )
+                        await self._market_close(
+                            trade, api_key, api_secret,
+                            qty=half, exit_side=exit_side_str,
+                        )
+                        trade.status = SignalStatus.TP1_HIT
+                        # Move SL to break-even (unless trailing takes over)
+                        if trade.trailing_mode == TrailingMode.OFF or not trade.trailing_active:
+                            trade.stop_loss = trade.entry_price
+                        changed.append(trade)
+                        await _persist(trade)
+                        continue
+
+                # ---- Trailing adjustment (in-memory only) ----
+                # Reuse the same TrailingStopManager the paper executor
+                # uses so LIVE + PAPER behave identically.
+                if trade.trailing_mode != TrailingMode.OFF:
+                    state = state_from_trade(trade)
+                    update = TrailingStopManager.update(state, price)
+                    apply_state_to_trade(trade, update.state)
+                    if update.sl_changed and update.new_sl is not None:
+                        trade.stop_loss = update.new_sl
+                    await _persist(trade)
 
             except Exception as e:  # noqa: BLE001
                 log.warning("live.reconcile_error", trade_id=trade.id, error=str(e))
 
         return changed
+
+    async def _market_close(
+        self,
+        trade: Trade,
+        api_key: str,
+        api_secret: str,
+        *,
+        qty: float,
+        exit_side: str,
+    ) -> None:
+        """Close a chunk of the live position with a plain MARKET reduceOnly.
+
+        Never raises. Errors are logged; caller continues to update
+        the DB trade so the local view stays consistent with what the
+        user sees in scanner_status / Telegram.
+        """
+        try:
+            await self.rest.place_order(
+                api_key,
+                api_secret,
+                symbol=trade.symbol,
+                side=exit_side,
+                type="MARKET",
+                quantity=qty,
+                reduceOnly="true",
+                newOrderRespType="RESULT",
+            )
+            log.info(
+                "live.market_close",
+                trade_id=trade.id,
+                symbol=trade.symbol,
+                qty=qty,
+                side=exit_side,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.error(
+                "live.market_close_failed",
+                trade_id=trade.id,
+                error=str(e),
+            )
 
     # ------------------------------------------------------------------
     # Internal — trailing / SL move
