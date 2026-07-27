@@ -279,6 +279,40 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Execution head-start */}
+      <Section
+        title="Execution head-start"
+        hint="Postpone LIVE auto-execute by N seconds after the signal alert goes out — gives you a window to place manual orders on Exness / MT5, or to cancel the signal from Signals page before real capital moves."
+      >
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+          <Field
+            label="Signal → execute delay (seconds)"
+            hint="0 = execute immediately (previous behaviour). 30-60 is a typical manual-trader head-start. Max 300 (5 minutes)."
+          >
+            <NumberInput
+              value={cfg.signal_execute_delay_seconds}
+              onCommit={(v) => patch({ signal_execute_delay_seconds: v })}
+              step={5}
+              min={0}
+              max={300}
+            />
+          </Field>
+          {cfg.signal_execute_delay_seconds > 0 && (
+            <div className="col-span-2 text-xs text-muted leading-relaxed p-3 rounded bg-bg-soft border border-border">
+              <strong className="text-white">On:</strong> Telegram &
+              dashboard alerts fire immediately when a signal is
+              detected. The market order waits{" "}
+              <strong className="text-white">
+                {cfg.signal_execute_delay_seconds}s
+              </strong>{" "}
+              before going in — cancel from{" "}
+              <em>Signals → PENDING signal → Cancel</em> if you don't
+              want the bot to act. Applies to LIVE mode only.
+            </div>
+          )}
+        </div>
+      </Section>
+
       {/* Telegram notifications */}
       <TelegramSection
         cfg={cfg}

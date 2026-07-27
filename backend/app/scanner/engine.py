@@ -319,9 +319,13 @@ class ScannerEngine:
         strategies: list,
         source: MarketDataSource,
     ) -> None:
-        # Skip if there's already an open trade for this symbol (crypto only).
-        if cfg.market_mode == MarketMode.CRYPTO and await self._has_open_trade(
-            symbol, cfg.trading_mode
+        # Skip if there's already an open trade OR a pending signal
+        # (delayed-execute window) for this symbol. Otherwise a signal
+        # firing at t=0 with a 60s delay would let the next tick at
+        # t=15 fire a second signal, defeating the head-start guarantee.
+        if cfg.market_mode == MarketMode.CRYPTO and (
+            await self._has_open_trade(symbol, cfg.trading_mode)
+            or await self._has_pending_signal(symbol, cfg.trading_mode)
         ):
             return
 
@@ -456,7 +460,39 @@ class ScannerEngine:
         # exactly the case that just burned fees in DOGE. Users expect
         # to see the setup regardless of what the executor manages to
         # do about it.
-        await _notify_signal(signal, cfg)
+        await _notify_signal(signal, cfg, cfg.signal_execute_delay_seconds)
+
+        # Optional execution head-start — give the user a configurable
+        # window between the alert going out and the market order
+        # actually going in. Lets them place manual orders on other
+        # platforms (Exness / MT5) at the same entry, or cancel the
+        # signal from the dashboard before real capital moves.
+        delay = max(0, int(cfg.signal_execute_delay_seconds or 0))
+        if delay > 0:
+            log.info(
+                "scanner.execute_delayed",
+                symbol=symbol,
+                signal_id=signal.id,
+                delay_s=delay,
+            )
+            # We drop out of the tick's per-symbol loop early and let
+            # a background task carry the signal to execution. Doing
+            # this inline (with `await asyncio.sleep(delay)`) would
+            # block every OTHER symbol's scan for the full delay
+            # window, which would starve the scanner.
+            asyncio.create_task(
+                self._execute_after_delay(
+                    signal_id=signal.id,
+                    sized=sized,
+                    trailing_cfg=trailing_cfg,
+                    delay_s=delay,
+                )
+            )
+            self._diagnostics[symbol]["stage"] = "delayed_execute"
+            self._diagnostics[symbol]["reason"] = (
+                f"signal fired; auto-execute scheduled in {delay}s"
+            )
+            return
 
         executor = self._executor_for(cfg)
         result = await executor.open_trade(
@@ -567,6 +603,135 @@ class ScannerEngine:
             rb_measured_move_tp1=cfg.rb_measured_move_tp1,
             rb_measured_move_tp2=cfg.rb_measured_move_tp2,
         )
+
+    async def _execute_after_delay(
+        self,
+        *,
+        signal_id: int,
+        sized,
+        trailing_cfg,
+        delay_s: int,
+    ) -> None:
+        """Sleep, then execute a delayed signal.
+
+        Guardrails re-checked right before the market order goes in:
+
+        - Signal must still be PENDING (user hasn't cancelled it from
+          the dashboard).
+        - Scanner must still be enabled (kill-switch).
+        - Trading mode + market mode must still match. Users flipping
+          from LIVE→PAPER during the window shouldn't cause a
+          surprise live fill.
+        - Symbol must not already have another open trade.
+
+        Any failure cancels the signal and marks diagnostics
+        appropriately. Executor exceptions still count toward the
+        circuit breaker.
+        """
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=delay_s)
+            log.info("scanner.execute_delayed.stopped", signal_id=signal_id)
+            return
+        except asyncio.TimeoutError:
+            pass  # delay elapsed normally
+
+        async with session_scope() as session:
+            signal = await session.get(Signal, signal_id)
+            if signal is None:
+                log.warning("scanner.execute_delayed.missing", signal_id=signal_id)
+                return
+            if signal.status != SignalStatus.PENDING:
+                log.info(
+                    "scanner.execute_delayed.skipped",
+                    signal_id=signal_id,
+                    status=signal.status.value,
+                )
+                return
+
+            cfg_row = (
+                await session.execute(select(UserConfig).limit(1))
+            ).scalars().first()
+
+        if cfg_row is None:
+            log.warning("scanner.execute_delayed.no_cfg", signal_id=signal_id)
+            return
+        if not cfg_row.scanner_enabled:
+            log.info(
+                "scanner.execute_delayed.scanner_off", signal_id=signal_id
+            )
+            await self._mark_signal_cancelled(
+                signal_id, "scanner disabled during delay"
+            )
+            return
+        if cfg_row.trading_mode != signal.mode or cfg_row.market_mode != MarketMode.CRYPTO:
+            log.info(
+                "scanner.execute_delayed.mode_changed",
+                signal_id=signal_id,
+                cfg_mode=cfg_row.trading_mode.value,
+                signal_mode=signal.mode.value,
+            )
+            await self._mark_signal_cancelled(
+                signal_id, "trading mode changed during delay"
+            )
+            return
+        if await self._has_open_trade(signal.symbol, cfg_row.trading_mode):
+            log.info(
+                "scanner.execute_delayed.dup", signal_id=signal_id, symbol=signal.symbol
+            )
+            await self._mark_signal_cancelled(
+                signal_id, "another trade already open on symbol"
+            )
+            return
+
+        # All clear — run the executor.
+        executor = self._executor_for(cfg_row)
+        try:
+            result = await executor.open_trade(
+                sized,
+                signal_id=signal.id,
+                trailing=trailing_cfg,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.error("scanner.execute_delayed.exception", error=str(e))
+            await self._mark_signal_cancelled(signal_id, f"exec_exception: {e}")
+            await self._maybe_trip_breaker(cfg_row, signal.symbol, str(e))
+            return
+
+        if result.ok and result.trade is not None:
+            async with session_scope() as session:
+                s = await session.get(Signal, signal.id)
+                if s is not None:
+                    s.status = SignalStatus.OPEN
+                    s.trade_id = result.trade.id
+                    session.add(s)
+            await event_bus.publish(
+                {
+                    "type": "signal.new",
+                    "data": _signal_dict(signal),
+                    "trade": _trade_dict(result.trade),
+                    "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                }
+            )
+            log.info(
+                "scanner.execute_delayed.ok",
+                signal_id=signal_id,
+                trade_id=result.trade.id,
+            )
+        else:
+            await self._mark_signal_cancelled(
+                signal_id, f"exec_failed: {result.error or 'unknown'}"
+            )
+            await self._maybe_trip_breaker(
+                cfg_row, signal.symbol, result.error or "unknown"
+            )
+
+    async def _mark_signal_cancelled(self, signal_id: int, reason: str) -> None:
+        async with session_scope() as session:
+            s = await session.get(Signal, signal_id)
+            if s is not None:
+                s.status = SignalStatus.CANCELLED
+                s.reason = (s.reason or "") + f" | delayed_cancel: {reason}"
+                session.add(s)
 
     async def _maybe_trip_breaker(
         self, cfg: UserConfig, symbol: str, error_text: str
@@ -750,6 +915,18 @@ class ScannerEngine:
             )
             return len(list(rows.scalars().all()))
 
+    async def _has_pending_signal(self, symbol: str, mode: TradingMode) -> bool:
+        """True if a signal for this symbol is queued for delayed execution."""
+        async with session_scope() as session:
+            rows = await session.execute(
+                select(Signal).where(
+                    Signal.symbol == symbol,
+                    Signal.mode == mode,
+                    Signal.status == SignalStatus.PENDING,
+                )
+            )
+            return rows.scalars().first() is not None
+
     async def _has_open_trade(self, symbol: str, mode: TradingMode) -> bool:
         async with session_scope() as session:
             rows = await session.execute(
@@ -878,12 +1055,30 @@ class ScannerEngine:
 # ==========================================================================
 
 
-async def _notify_signal(signal: Signal, cfg: UserConfig) -> None:
-    """Send a Telegram alert for a newly fired signal. Silent on failure."""
+async def _notify_signal(
+    signal: Signal, cfg: UserConfig, execute_delay_s: int = 0
+) -> None:
+    """Send a Telegram alert for a newly fired signal. Silent on failure.
+
+    When ``execute_delay_s`` is set (LIVE + manual head-start mode),
+    the message includes a "auto-execute in Xs" line so the user
+    knows how long they have to react.
+    """
     if not cfg.telegram_enabled or not cfg.telegram_notify_signals:
         return
     try:
-        await tg_notifier.send_message(cfg, tg_notifier.render_signal(signal))
+        body = tg_notifier.render_signal(signal)
+        if execute_delay_s > 0 and cfg.trading_mode.value == "live":
+            body += (
+                f"\n\n⏳ Auto-execute in {execute_delay_s}s. "
+                "Cancel from dashboard if you want to sit this one out."
+            )
+        elif execute_delay_s > 0:
+            body += (
+                f"\n\n⏳ Paper auto-execute in {execute_delay_s}s "
+                "(head-start for manual copy to Exness / MT5)."
+            )
+        await tg_notifier.send_message(cfg, body)
     except Exception as e:  # noqa: BLE001 — never crash caller
         log.warning("notify.signal_failed", error=str(e))
 

@@ -72,6 +72,7 @@ export interface Config {
   telegram_notify_trades: boolean;
   telegram_notify_hourly_balance: boolean;
   telegram_balance_interval_min: number;
+  signal_execute_delay_seconds: number;
 }
 
 export interface Signal {

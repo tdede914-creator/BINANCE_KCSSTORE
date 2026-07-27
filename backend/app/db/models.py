@@ -208,6 +208,22 @@ class UserConfig(SQLModel, table=True):
     # digest). 0 disables regardless of the toggle above.
     telegram_balance_interval_min: int = Field(default=60)
 
+    # ---------------------------------------------------------------
+    # Signal → execution delay.
+    #
+    # When > 0, LIVE-mode execution is postponed by this many seconds
+    # after the signal fires. Telegram / dashboard notifications go
+    # out immediately, but the actual market order waits. Purpose:
+    #
+    #   - Give the user a head-start to place manual orders on other
+    #     platforms (Exness, MT5) with the same entry/SL/TP.
+    #   - Provide a window to review + cancel a signal from the
+    #     dashboard before real capital is committed.
+    #
+    # 0 = execute immediately (previous behaviour).
+    # ---------------------------------------------------------------
+    signal_execute_delay_seconds: int = Field(default=0)
+
     # Trailing stop
     trailing_mode: TrailingMode = Field(default=TrailingMode.OFF)
     # RR (in units of initial risk) that price must move in favor before

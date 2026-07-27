@@ -367,6 +367,10 @@ export const api = {
       "/api/config/telegram/test",
       { method: "POST" },
     ),
+
+  // ----- Cancel a PENDING (delayed-execute) signal -----
+  cancelSignal: (id: number) =>
+    request<Signal>(`/api/signals/${id}/cancel`, { method: "POST" }),
   detectTelegramChatId: () =>
     request<{ ok: boolean; chat_id?: string; error: string | null }>(
       "/api/config/telegram/detect-chat-id",

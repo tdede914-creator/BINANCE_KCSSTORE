@@ -168,6 +168,22 @@ export function SignalCard({
           (forex / indices / metals) where the user must manually execute
           on Exness or MT5. */}
       <div className="px-4 py-2 border-t border-border flex items-center gap-2 flex-wrap">
+        {signal.status === "PENDING" && (
+          <button
+            onClick={async () => {
+              if (!confirm("Cancel this pending signal? Auto-execute will be skipped.")) return;
+              try {
+                await (await import("@/lib/api")).api.cancelSignal(signal.id);
+              } catch (e) {
+                alert(`Cancel failed: ${e}`);
+              }
+            }}
+            className="text-xs font-semibold px-2.5 py-1 rounded border bg-short/15 border-short/40 text-short hover:bg-short/25"
+            title="Skip the delayed auto-execute for this signal"
+          >
+            ✗ Cancel
+          </button>
+        )}
         <button
           onClick={doCopy}
           className={clsx(
