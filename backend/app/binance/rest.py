@@ -192,6 +192,40 @@ class BinanceREST:
                 return float(asset.get("availableBalance", 0.0))
         return 0.0
 
+    async def get_balance_info(self, api_key: str, api_secret: str) -> dict:
+        """Return the full USDT balance snapshot for the futures wallet.
+
+        Shape:
+            {
+                "wallet_balance": float,     # walletBalance (excludes unreal.)
+                "available_balance": float,  # availableBalance (free margin)
+                "unrealized_pnl": float,     # unrealizedProfit on all positions
+                "margin_balance": float,     # walletBalance + unrealizedProfit
+                "initial_margin": float,     # currently locked in open positions
+            }
+
+        This is what the dashboard uses to show LIVE-mode equity /
+        free-margin cards, without collapsing to a single number the
+        way ``get_balance_usdt`` does.
+        """
+        acct = await self.get_account(api_key, api_secret)
+        for asset in acct.get("assets", []):
+            if asset.get("asset") == "USDT":
+                return {
+                    "wallet_balance": float(asset.get("walletBalance", 0.0)),
+                    "available_balance": float(asset.get("availableBalance", 0.0)),
+                    "unrealized_pnl": float(asset.get("unrealizedProfit", 0.0)),
+                    "margin_balance": float(asset.get("marginBalance", 0.0)),
+                    "initial_margin": float(asset.get("initialMargin", 0.0)),
+                }
+        return {
+            "wallet_balance": 0.0,
+            "available_balance": 0.0,
+            "unrealized_pnl": 0.0,
+            "margin_balance": 0.0,
+            "initial_margin": 0.0,
+        }
+
     async def set_leverage(
         self, symbol: str, leverage: int, api_key: str, api_secret: str
     ) -> dict:

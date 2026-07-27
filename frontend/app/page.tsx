@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import type { WalletBalance } from "@/lib/api";
 import { useEventStream } from "@/lib/ws";
 import type { Config, Signal, Stats, Trade } from "@/lib/types";
 import { StatCard } from "@/components/StatCard";
@@ -32,6 +33,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [openTrades, setOpenTrades] = useState<Trade[]>([]);
+  const [wallet, setWallet] = useState<WalletBalance | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -60,16 +62,18 @@ export default function DashboardPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [c, s, sig, trades] = await Promise.all([
+      const [c, s, sig, trades, w] = await Promise.all([
         api.getConfig(),
         api.tradeStats(),
         api.listSignals({ limit: 8 }),
         api.listTrades({ open_only: true, limit: 20 }),
+        api.walletBalance().catch(() => null),
       ]);
       setCfg(c);
       setStats(s);
       setSignals(sig);
       setOpenTrades(trades);
+      setWallet(w);
       setErr(null);
 
       // Default chart selection once config is loaded. Pick the right
@@ -225,18 +229,64 @@ export default function DashboardPage() {
       }, 0);
   }, [openTrades]);
 
-  const paperWallet =
-    (cfg?.paper_balance ?? 0) + (stats?.total_pnl_usdt ?? 0);
-  const paperFree = Math.max(paperWallet - paperLocked, 0);
+  // ------------------------------------------------------------------
+  // Wallet display — mode-aware.
+  //
+  // LIVE mode:  numbers come from Binance /fapi/v2/account so what the
+  //             card shows matches the user's actual futures wallet.
+  // PAPER mode: numbers come from the backend paper-equity calc which
+  //             mirrors the risk manager's sizing basis exactly.
+  //
+  // If /api/wallet/balance failed for any reason (e.g. keys missing in
+  // LIVE mode, transient network error) we fall back to the local
+  // paper computation so at least SOMETHING shows.
+  // ------------------------------------------------------------------
+  const walletDisplay = useMemo(() => {
+    if (wallet) {
+      return {
+        free: wallet.available_balance,
+        wallet: wallet.wallet_balance,
+        locked: wallet.locked_margin,
+        source: wallet.source,
+        mode: wallet.mode,
+        unrealised: wallet.unrealized_pnl,
+        error: wallet.error,
+      };
+    }
+    const w = (cfg?.paper_balance ?? 0) + (stats?.total_pnl_usdt ?? 0);
+    return {
+      free: Math.max(w - paperLocked, 0),
+      wallet: w,
+      locked: paperLocked,
+      source: "paper" as const,
+      mode: (cfg?.trading_mode ?? "paper") as "paper" | "live",
+      unrealised: 0,
+      error: null as string | null,
+    };
+  }, [wallet, cfg, stats, paperLocked]);
+
+  const paperFree = walletDisplay.free;
 
   const paperEquityHint = useMemo(() => {
-    if (!cfg) return undefined;
-    const parts: string[] = [`wallet $${formatUsdt(paperWallet)}`];
-    if (paperLocked > 0) {
-      parts.push(`$${formatUsdt(paperLocked)} locked`);
+    const parts: string[] = [`wallet $${formatUsdt(walletDisplay.wallet)}`];
+    if (walletDisplay.mode === "live") {
+      parts.push(walletDisplay.source === "binance" ? "· binance live" : "· fallback");
+      if (walletDisplay.unrealised) {
+        parts.push(
+          `${walletDisplay.unrealised >= 0 ? "+" : ""}${formatUsdt(
+            walletDisplay.unrealised,
+          )} unreal.`,
+        );
+      }
+    }
+    if (walletDisplay.locked > 0) {
+      parts.push(`$${formatUsdt(walletDisplay.locked)} locked`);
+    }
+    if (walletDisplay.error) {
+      parts.push(`⚠ ${walletDisplay.error}`);
     }
     return parts.join(" · ");
-  }, [cfg, paperWallet, paperLocked]);
+  }, [walletDisplay]);
 
   // Watchlist + any open-trade symbols not already in it → chart selector options.
   const chartSymbols = useMemo(() => {

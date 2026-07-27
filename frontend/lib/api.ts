@@ -209,6 +209,17 @@ export interface BatchBacktestResponse {
   summaries: BatchBacktestSummary[];
 }
 
+export interface WalletBalance {
+  mode: "paper" | "live";
+  source: "paper" | "binance" | "paper_fallback";
+  wallet_balance: number;
+  available_balance: number;
+  unrealized_pnl: number;
+  locked_margin: number;
+  equity: number;
+  error: string | null;
+}
+
 /**
  * Resolve the backend URL.
  *
@@ -325,6 +336,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(params),
     }),
+
+  // ----- Wallet (mode-aware balance) -----
+  walletBalance: () =>
+    request<WalletBalance>("/api/wallet/balance"),
 
   // ----- Signals -----
   listSignals: (params: { limit?: number; symbol?: string } = {}) => {
