@@ -521,7 +521,15 @@ class ScannerEngine:
 
     def _executor_for(self, cfg: UserConfig) -> BaseExecutor:
         if cfg.trading_mode == TradingMode.LIVE:
-            return LiveExecutor(rest=self._rest)
+            # Reuse the crypto data source's REST client when possible so
+            # we don't spin up an extra httpx.AsyncClient per tick.
+            # Fall back to a fresh one if the current source isn't Binance
+            # (e.g. forex mode was active earlier this tick).
+            rest = None
+            src = self._source
+            if isinstance(src, BinanceDataSource):
+                rest = src._rest  # noqa: SLF001
+            return LiveExecutor(rest=rest)
         return PaperExecutor()
 
     async def _equity_for(self, cfg: UserConfig, source: MarketDataSource) -> float:
