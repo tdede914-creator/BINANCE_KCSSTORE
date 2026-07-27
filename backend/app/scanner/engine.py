@@ -108,6 +108,13 @@ class ScannerEngine:
         # frontend can show a clear banner instead of silently
         # producing an empty panel.
         self._last_reconcile_error: str | None = None
+        # Per-symbol cool-down after an exec-failed signal, so a bug (or
+        # a transient exchange error, or a broken precision map) doesn't
+        # cause the same signal to re-fire every tick. Stores a
+        # ``time.monotonic()`` expiry timestamp; if a symbol has an
+        # entry in this dict that's still in the future, ``_scan_one``
+        # skips it. Cleared automatically when the deadline passes.
+        self._symbol_cooldown_until: dict[str, float] = {}
 
     def stop(self) -> None:
         self._stop.set()
@@ -254,9 +261,28 @@ class ScannerEngine:
                 )
                 return
 
+        import time as _time
         for symbol in watchlist:
             if self._stop.is_set():
                 break
+            # Skip symbols that recently exec-failed to prevent the same
+            # broken signal firing every tick. Cool-down is 5 minutes;
+            # a config edit / bug fix is short enough for the user to
+            # just wait it out.
+            expires = self._symbol_cooldown_until.get(symbol)
+            if expires is not None:
+                if _time.monotonic() < expires:
+                    diag = self._diagnostics.get(symbol) or {}
+                    diag["stage"] = "cooldown"
+                    diag["reason"] = (
+                        f"skipping — cooldown "
+                        f"{int(expires - _time.monotonic())}s "
+                        "after previous exec_failed"
+                    )
+                    self._diagnostics[symbol] = diag
+                    continue
+                del self._symbol_cooldown_until[symbol]
+
             try:
                 await self._scan_one(symbol, cfg, strategies, source)
             except Exception as e:  # noqa: BLE001
@@ -269,6 +295,9 @@ class ScannerEngine:
                 if cur and cur.get("stage") == "fired":
                     cur["stage"] = "exec_failed"
                     cur["reason"] = f"exception: {e}"
+                # Start a cool-down so we don't spam the same broken
+                # signal every tick until the underlying bug is fixed.
+                self._symbol_cooldown_until[symbol] = _time.monotonic() + 300
 
     # ----------------------------------------------------------------------
     # One-symbol pass
