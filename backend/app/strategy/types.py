@@ -28,6 +28,9 @@ class SignalProposal:
     stop_loss: float
     take_profit_1: float
     take_profit_2: float
+    # Optional third target — surfaced in the signal card + Telegram
+    # message for manual reference. 0.0 means "no TP3 configured".
+    take_profit_3: float = 0.0
 
     # Timeframes used
     bias_tf: str
@@ -58,6 +61,12 @@ class StrategyContext:
     atr_sl_mult: float = 0.5
     rr_tp1: float = 2.0
     rr_tp2: float = 3.0
+    # TP3 is a *display* target — a longer runner that we surface in
+    # signal cards and Telegram messages so the user can trail toward
+    # it manually. It is NOT wired into on-exchange TP orders (TP1
+    # closes 50% and TP2 closes the rest); auto-executing three tiers
+    # would need a full trade-lifecycle redesign.
+    rr_tp3: float = 4.0
     setup_max_atr_distance: float = 1.5  # price must be within N × ATR of setup zone
 
     # Regime filter — reject signals when the market is ranging.

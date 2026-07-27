@@ -189,6 +189,9 @@ class RangeBreakoutStrategy:
             return None, diag
 
         # 6. --- Build the signal.
+        # Range Breakout uses measured moves for TP1/TP2, and 2× TP2 as a
+        # display-only TP3 runner so the Telegram signal card matches the
+        # 3-tier target style users are used to from Telegram signal channels.
         if long_breakout:
             side = Side.LONG
             entry = close
@@ -196,6 +199,7 @@ class RangeBreakoutStrategy:
             risk = entry - sl
             tp1 = entry + range_height * self.ctx.rb_measured_move_tp1
             tp2 = entry + range_height * self.ctx.rb_measured_move_tp2
+            tp3 = entry + range_height * self.ctx.rb_measured_move_tp2 * 1.5
         else:
             side = Side.SHORT
             entry = close
@@ -203,6 +207,7 @@ class RangeBreakoutStrategy:
             risk = sl - entry
             tp1 = entry - range_height * self.ctx.rb_measured_move_tp1
             tp2 = entry - range_height * self.ctx.rb_measured_move_tp2
+            tp3 = entry - range_height * self.ctx.rb_measured_move_tp2 * 1.5
 
         if risk <= 0:
             diag["reason"] = "computed risk <= 0"
@@ -235,6 +240,7 @@ class RangeBreakoutStrategy:
             stop_loss=sl,
             take_profit_1=tp1,
             take_profit_2=tp2,
+            take_profit_3=tp3,
             bias_tf=bias_tf,
             setup_tf=setup_tf,
             entry_tf=entry_tf,

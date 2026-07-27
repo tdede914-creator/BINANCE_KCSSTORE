@@ -441,6 +441,14 @@ class ScannerEngine:
         # Persist signal + execute
         signal = await self._save_signal(proposal, sized, cfg)
 
+        # Push the SIGNAL notification immediately, BEFORE we try to
+        # execute. Notifying only on execution-success (the old
+        # behaviour) hid every signal whose SL placement failed —
+        # exactly the case that just burned fees in DOGE. Users expect
+        # to see the setup regardless of what the executor manages to
+        # do about it.
+        await _notify_signal(signal, cfg)
+
         executor = self._executor_for(cfg)
         result = await executor.open_trade(
             sized,
@@ -474,7 +482,9 @@ class ScannerEngine:
                     "timestamp": datetime.now(tz=timezone.utc).isoformat(),
                 }
             )
-            await _notify_signal(signal, cfg)
+            # Signal notification was already sent right after _save_signal
+            # above. Trade-opened notification comes from _notify_trade
+            # via the reconcile loop.
         else:
             async with session_scope() as session:
                 s = await session.get(Signal, signal.id)
@@ -537,6 +547,7 @@ class ScannerEngine:
             atr_sl_mult=cfg.atr_sl_mult,
             rr_tp1=cfg.rr_tp1,
             rr_tp2=cfg.rr_tp2,
+            rr_tp3=cfg.rr_tp3,
             adx_period=cfg.adx_period,
             adx_min=cfg.adx_min,
             volume_mult=cfg.volume_mult,
@@ -700,6 +711,7 @@ class ScannerEngine:
             stop_loss=proposal.stop_loss,
             take_profit_1=proposal.take_profit_1,
             take_profit_2=proposal.take_profit_2,
+            take_profit_3=proposal.take_profit_3 or None,
             leverage=cfg.leverage,
             quantity=0.0,
             risk_amount_usdt=0.0,
@@ -731,6 +743,7 @@ class ScannerEngine:
             stop_loss=proposal.stop_loss,
             take_profit_1=proposal.take_profit_1,
             take_profit_2=proposal.take_profit_2,
+            take_profit_3=proposal.take_profit_3 or None,
             leverage=cfg.leverage,
             quantity=0.0,
             risk_amount_usdt=0.0,
@@ -762,6 +775,7 @@ class ScannerEngine:
             stop_loss=sized.stop_loss,
             take_profit_1=sized.take_profit_1,
             take_profit_2=sized.take_profit_2,
+            take_profit_3=proposal.take_profit_3 or None,
             leverage=sized.leverage,
             quantity=sized.quantity,
             risk_amount_usdt=sized.risk_usdt,
@@ -831,6 +845,7 @@ def _signal_dict(s: Signal) -> dict:
         "stop_loss": s.stop_loss,
         "take_profit_1": s.take_profit_1,
         "take_profit_2": s.take_profit_2,
+        "take_profit_3": getattr(s, "take_profit_3", None),
         "leverage": s.leverage,
         "quantity": s.quantity,
         "risk_amount_usdt": s.risk_amount_usdt,

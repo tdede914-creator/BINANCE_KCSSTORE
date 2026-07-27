@@ -107,7 +107,7 @@ class MTFConfluenceStrategy:
 
         # ---- 3. Trigger --------------------------------------------------
         diag["stage"] = "trigger"
-        trigger_ok, entry_price, sl, tp1, tp2, trig_diag = self._compute_trigger(
+        trigger_ok, entry_price, sl, tp1, tp2, tp3, trig_diag = self._compute_trigger(
             entry_df, bias
         )
         diag["trigger"] = trig_diag
@@ -133,6 +133,7 @@ class MTFConfluenceStrategy:
             stop_loss=sl,
             take_profit_1=tp1,
             take_profit_2=tp2,
+            take_profit_3=tp3,
             bias_tf=bias_tf,
             setup_tf=setup_tf,
             entry_tf=entry_tf,
@@ -278,7 +279,7 @@ class MTFConfluenceStrategy:
         self,
         df: pd.DataFrame,
         bias: Bias,
-    ) -> tuple[bool, float, float, float, float, dict]:
+    ) -> tuple[bool, float, float, float, float, float, dict]:
         enriched = enrich(
             df,
             ema_fast=self.ctx.ema_fast,
@@ -311,7 +312,7 @@ class MTFConfluenceStrategy:
 
         if np.isnan(atr_val) or atr_val <= 0:
             diag["reason"] = "atr invalid"
-            return False, 0, 0, 0, 0, diag
+            return False, 0, 0, 0, 0, 0, diag
 
         swings = find_swings(df, left=2, right=2)
         prev_swing_high = last_swing_high(swings, before_index=len(df) - 1)
@@ -320,10 +321,10 @@ class MTFConfluenceStrategy:
         # ------------ RSI filter ------------
         if bias == Bias.LONG and rsi_val > self.ctx.rsi_long_max:
             diag["reason"] = f"RSI too high ({rsi_val:.1f})"
-            return False, 0, 0, 0, 0, diag
+            return False, 0, 0, 0, 0, 0, diag
         if bias == Bias.SHORT and rsi_val < self.ctx.rsi_short_min:
             diag["reason"] = f"RSI too low ({rsi_val:.1f})"
-            return False, 0, 0, 0, 0, diag
+            return False, 0, 0, 0, 0, 0, diag
 
         # ------------ ADX regime filter ------------
         # ADX measures trend strength. Below the minimum threshold the
@@ -333,7 +334,7 @@ class MTFConfluenceStrategy:
         # A/B test with and without it.
         if self.ctx.adx_min > 0 and adx_val < self.ctx.adx_min:
             diag["reason"] = f"ADX too low ({adx_val:.1f} < {self.ctx.adx_min:.1f}) — sideways market"
-            return False, 0, 0, 0, 0, diag
+            return False, 0, 0, 0, 0, 0, diag
 
         # ------------ Volume confirmation ------------
         # Require the entry candle's volume to exceed a multiple of its
@@ -374,11 +375,11 @@ class MTFConfluenceStrategy:
 
         if not (bos_ok or retest_ok):
             diag["reason"] = "no BOS or retest"
-            return False, 0, 0, 0, 0, diag
+            return False, 0, 0, 0, 0, 0, diag
 
         if not vol_ok:
             diag["reason"] = "volume too low"
-            return False, 0, 0, 0, 0, diag
+            return False, 0, 0, 0, 0, 0, diag
 
         # ------------ Compute SL / TP -------------
         entry = close
@@ -388,25 +389,27 @@ class MTFConfluenceStrategy:
             risk = entry - sl
             if risk <= 0:
                 diag["reason"] = "computed SL >= entry"
-                return False, 0, 0, 0, 0, diag
+                return False, 0, 0, 0, 0, 0, diag
             tp1 = entry + risk * self.ctx.rr_tp1
             tp2 = entry + risk * self.ctx.rr_tp2
+            tp3 = entry + risk * self.ctx.rr_tp3
         else:
             base_sl = prev_swing_high.price if prev_swing_high else float(df["high"].tail(10).max())
             sl = base_sl + self.ctx.atr_sl_mult * atr_val
             risk = sl - entry
             if risk <= 0:
                 diag["reason"] = "computed SL <= entry"
-                return False, 0, 0, 0, 0, diag
+                return False, 0, 0, 0, 0, 0, diag
             tp1 = entry - risk * self.ctx.rr_tp1
             tp2 = entry - risk * self.ctx.rr_tp2
+            tp3 = entry - risk * self.ctx.rr_tp3
 
         diag["reason"] = (
             f"{'BOS' if bos_ok else 'Retest'}"
             f"{' + Retest' if bos_ok and retest_ok else ''}"
-            f"; RR set to {self.ctx.rr_tp1}/{self.ctx.rr_tp2}"
+            f"; RR set to {self.ctx.rr_tp1}/{self.ctx.rr_tp2}/{self.ctx.rr_tp3}"
         )
-        return True, entry, sl, tp1, tp2, diag
+        return True, entry, sl, tp1, tp2, tp3, diag
 
     # ------------------------------------------------------------------
     # Confidence score (heuristic 0..1)

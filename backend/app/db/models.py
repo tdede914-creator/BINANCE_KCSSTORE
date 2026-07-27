@@ -160,6 +160,7 @@ class UserConfig(SQLModel, table=True):
     atr_sl_mult: float = Field(default=0.5)
     rr_tp1: float = Field(default=2.0)
     rr_tp2: float = Field(default=3.0)
+    rr_tp3: float = Field(default=4.0)
 
     # ADX-based regime filter (skip trend signals in ranging markets).
     # Default: reject entries when ADX < 20 (Wilder-typical threshold).
@@ -250,6 +251,8 @@ class Signal(SQLModel, table=True):
     stop_loss: float
     take_profit_1: float
     take_profit_2: float
+    # Optional third target — nullable for backward compatibility.
+    take_profit_3: float | None = Field(default=None)
 
     # Sizing
     leverage: int = Field(default=5)

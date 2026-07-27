@@ -42,6 +42,7 @@ export interface Config {
   atr_sl_mult: number;
   rr_tp1: number;
   rr_tp2: number;
+  rr_tp3: number;
   // Regime + volume filters
   adx_period: number;
   adx_min: number;
@@ -87,6 +88,7 @@ export interface Signal {
   stop_loss: number;
   take_profit_1: number;
   take_profit_2: number;
+  take_profit_3?: number | null;
   leverage: number;
   quantity: number;
   risk_amount_usdt: number;

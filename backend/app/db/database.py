@@ -50,6 +50,7 @@ AsyncSessionLocal = async_sessionmaker(
 # (table_name, column_name, ddl_type_and_default)
 _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("user_config", "adx_period", "INTEGER NOT NULL DEFAULT 14"),
+    ("user_config", "rr_tp3", "DOUBLE PRECISION NOT NULL DEFAULT 4.0"),
     ("user_config", "adx_min", "DOUBLE PRECISION NOT NULL DEFAULT 20.0"),
     ("user_config", "volume_mult", "DOUBLE PRECISION NOT NULL DEFAULT 1.2"),
     # Multi-strategy toggles + Range Breakout params.
@@ -63,6 +64,8 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("user_config", "rb_measured_move_tp2", "DOUBLE PRECISION NOT NULL DEFAULT 1.5"),
     # Signal.strategy — used to filter historical signals per strategy.
     ("signals", "strategy", "VARCHAR NOT NULL DEFAULT 'mtf_confluence'"),
+    # Optional third profit target — nullable so old rows stay valid.
+    ("signals", "take_profit_3", "DOUBLE PRECISION"),
     # Telegram notifier — bot token (encrypted), chat id, per-channel toggles.
     ("user_config", "telegram_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ("user_config", "telegram_bot_token_enc", "VARCHAR NOT NULL DEFAULT ''"),

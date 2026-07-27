@@ -72,6 +72,9 @@ function formatSignalForClipboard(signal: Signal): string {
     `❌ SL:     ${formatPrice(signal.stop_loss)}`,
     `🎯 TP1:    ${formatPrice(signal.take_profit_1)}`,
     `🎯 TP2:    ${formatPrice(signal.take_profit_2)}`,
+    ...(signal.take_profit_3
+      ? [`🎯 TP3:    ${formatPrice(signal.take_profit_3)}`]
+      : []),
     "",
     `Leverage:   ${signal.leverage}x`,
     `Confidence: ${(signal.confidence * 100).toFixed(0)}%`,
@@ -145,11 +148,19 @@ export function SignalCard({
         </div>
       </div>
 
-      <div className="p-4 grid grid-cols-4 gap-3 text-sm font-mono">
+      <div
+        className={clsx(
+          "p-4 grid gap-3 text-sm font-mono",
+          signal.take_profit_3 ? "grid-cols-5" : "grid-cols-4",
+        )}
+      >
         <PriceCell label="Entry" value={signal.entry_price} />
         <PriceCell label="SL" value={signal.stop_loss} tone="short" />
         <PriceCell label="TP1" value={signal.take_profit_1} tone="long" />
         <PriceCell label="TP2" value={signal.take_profit_2} tone="long" />
+        {signal.take_profit_3 != null && signal.take_profit_3 > 0 && (
+          <PriceCell label="TP3" value={signal.take_profit_3} tone="long" />
+        )}
       </div>
 
       {/* Action bar: Exness/TradingView helpers.

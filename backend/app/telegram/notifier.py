@@ -107,7 +107,7 @@ def _fmt_price(p: float) -> str:
 
 
 def render_signal(signal: Signal) -> str:
-    """Format a Signal → Markdown message body."""
+    """Format a Signal → Markdown message body (Telegram trader-signal style)."""
     side = signal.side.value if hasattr(signal.side, "value") else str(signal.side)
     emoji = "🟢" if side == "LONG" else "🔴"
     strat = getattr(signal, "strategy", "mtf_confluence")
@@ -124,6 +124,11 @@ def render_signal(signal: Signal) -> str:
         f"❌ SL: `{_fmt_price(signal.stop_loss)}`",
         f"🎯 TP1: `{_fmt_price(signal.take_profit_1)}`",
         f"🎯 TP2: `{_fmt_price(signal.take_profit_2)}`",
+    ]
+    tp3 = getattr(signal, "take_profit_3", None)
+    if tp3 is not None and tp3 > 0:
+        lines.append(f"🎯 TP3: `{_fmt_price(float(tp3))}`")
+    lines += [
         "",
         f"Leverage: {signal.leverage}x · Conf {signal.confidence * 100:.0f}%",
         f"Strategy: _{strat_pretty}_",

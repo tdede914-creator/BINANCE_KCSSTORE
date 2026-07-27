@@ -41,6 +41,7 @@ class BacktestStrategyParams(BaseModel):
     atr_sl_mult: float = 0.5
     rr_tp1: float = 2.0
     rr_tp2: float = 3.0
+    rr_tp3: float = 4.0
     # Regime + volume filters. Match the live scanner defaults so A/B
     # comparisons between backtest and live are apples-to-apples.
     adx_period: int = 14
@@ -139,6 +140,7 @@ async def run_backtest(body: BacktestRequest) -> BacktestResponse:
         atr_sl_mult=body.strategy_params.atr_sl_mult,
         rr_tp1=body.strategy_params.rr_tp1,
         rr_tp2=body.strategy_params.rr_tp2,
+        rr_tp3=body.strategy_params.rr_tp3,
         adx_period=body.strategy_params.adx_period,
         adx_min=body.strategy_params.adx_min,
         volume_mult=body.strategy_params.volume_mult,
@@ -270,6 +272,7 @@ async def run_batch(body: BatchBacktestRequest) -> BatchBacktestResponse:
         atr_sl_mult=body.strategy_params.atr_sl_mult,
         rr_tp1=body.strategy_params.rr_tp1,
         rr_tp2=body.strategy_params.rr_tp2,
+        rr_tp3=body.strategy_params.rr_tp3,
         adx_period=body.strategy_params.adx_period,
         adx_min=body.strategy_params.adx_min,
         volume_mult=body.strategy_params.volume_mult,

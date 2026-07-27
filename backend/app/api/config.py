@@ -54,6 +54,7 @@ class ConfigOut(BaseModel):
     atr_sl_mult: float
     rr_tp1: float
     rr_tp2: float
+    rr_tp3: float
 
     # Regime + volume filters
     adx_period: int
@@ -115,6 +116,7 @@ class ConfigUpdate(BaseModel):
     atr_sl_mult: float | None = None
     rr_tp1: float | None = None
     rr_tp2: float | None = None
+    rr_tp3: float | None = Field(default=None, ge=0.5, le=20.0)
     adx_period: int | None = Field(default=None, ge=2, le=100)
     adx_min: float | None = Field(default=None, ge=0.0, le=60.0)
     volume_mult: float | None = Field(default=None, ge=0.0, le=5.0)
@@ -191,6 +193,7 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
         atr_sl_mult=cfg.atr_sl_mult,
         rr_tp1=cfg.rr_tp1,
         rr_tp2=cfg.rr_tp2,
+        rr_tp3=cfg.rr_tp3,
         adx_period=cfg.adx_period,
         adx_min=cfg.adx_min,
         volume_mult=cfg.volume_mult,

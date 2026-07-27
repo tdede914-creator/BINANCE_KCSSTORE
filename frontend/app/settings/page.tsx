@@ -642,6 +642,12 @@ export default function SettingsPage() {
           <Field label="RR TP2">
             <NumberInput value={cfg.rr_tp2} onCommit={(v) => patch({ rr_tp2: v })} step={0.1} min={0.5} max={20} />
           </Field>
+          <Field
+            label="RR TP3 (display-only)"
+            hint="Third target shown in signal cards + Telegram. Not auto-executed — TP1 closes 50%, TP2 closes the rest. Use trailing stop to hold beyond TP2 toward TP3."
+          >
+            <NumberInput value={cfg.rr_tp3} onCommit={(v) => patch({ rr_tp3: v })} step={0.1} min={0.5} max={20} />
+          </Field>
         </div>
       </Section>
 
