@@ -844,6 +844,25 @@ function TelegramSection({
   const [token, setToken] = useState("");
   const [chatId, setChatId] = useState(cfg.telegram_chat_id ?? "");
   const [testing, setTesting] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+
+  const detectChatId = async () => {
+    setDetecting(true);
+    try {
+      const r = await api.detectTelegramChatId();
+      if (r.ok && r.chat_id) {
+        setChatId(r.chat_id);
+        onMsg({ text: `Chat ID auto-detected: ${r.chat_id}`, kind: "ok" });
+        await onReload();
+      } else {
+        onMsg({ text: r.error ?? "Could not detect chat ID.", kind: "err" });
+      }
+    } catch (e) {
+      onMsg({ text: String(e), kind: "err" });
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   // Reset the chat_id field if the config reloaded from server with a
   // different value (e.g. right after a Save from another tab).
@@ -925,17 +944,25 @@ function TelegramSection({
             <li>
               Open a chat with your new bot and send{" "}
               <code className="text-white">/start</code>. Anything is fine
-              — the bot just needs to have received one message from you
-              so it's allowed to reply.
+              — the bot just needs to have received one message from you.
             </li>
             <li>
-              In any browser visit{" "}
-              <code className="text-white">
-                https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates
-              </code>{" "}
-              (replace &lt;TOKEN&gt; with yours). Find{" "}
-              <code className="text-white">"chat":&#123;"id": ...&#125;</code>{" "}
-              in the JSON — that number is your chat ID. Paste it below.
+              <strong className="text-white">Getting chat ID — easiest:</strong>{" "}
+              save the bot token below, then click{" "}
+              <em>Auto-detect chat ID</em>. It reads your latest message
+              to the bot and fills the field for you.
+              <div className="mt-1 text-[10px] text-muted/70">
+                Alternatives if that fails: (a) send{" "}
+                <code className="text-white">/start</code> to{" "}
+                <code className="text-white">@userinfobot</code> — it
+                replies with your user ID, which IS your chat ID for
+                direct messages. (b) open{" "}
+                <code className="text-white">
+                  https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates
+                </code>{" "}
+                and copy the number from{" "}
+                <code className="text-white">"chat":&#123;"id": ...&#125;</code>.
+              </div>
             </li>
             <li>Enable notifications and click <em>Send test</em>.</li>
           </ol>
@@ -991,7 +1018,9 @@ function TelegramSection({
 
         {/* Chat ID */}
         <div>
-          <div className="text-xs text-muted mb-1">Chat ID</div>
+          <div className="text-xs text-muted mb-1 flex items-center justify-between">
+            <span>Chat ID (same number as your Telegram user ID for DMs)</span>
+          </div>
           <div className="flex gap-2">
             <input
               type="text"
@@ -1008,6 +1037,18 @@ function TelegramSection({
             >
               Save
             </button>
+            <button
+              onClick={detectChatId}
+              disabled={saving || detecting || !cfg.telegram_configured}
+              title="Reads the newest message received by your bot and copies its sender chat ID here"
+              className="px-3 py-2 bg-long/15 hover:bg-long/25 text-long border border-long/40 rounded text-sm disabled:opacity-40 whitespace-nowrap"
+            >
+              {detecting ? "Detecting…" : "Auto-detect"}
+            </button>
+          </div>
+          <div className="text-[10px] text-muted/70 mt-1">
+            Auto-detect requires: bot token saved above, and you must
+            have sent at least one message (e.g. <code className="text-white">/start</code>) to your bot on Telegram.
           </div>
         </div>
 

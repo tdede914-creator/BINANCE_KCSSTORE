@@ -302,6 +302,82 @@ async def delete_telegram_token(session: SessionDep) -> ConfigOut:
     return _to_out(cfg)
 
 
+@router.post("/telegram/detect-chat-id")
+async def detect_telegram_chat_id(session: SessionDep) -> dict:
+    """Call getUpdates on the stored bot token and pull the newest chat ID.
+
+    User workflow:
+      1. Save bot token in Settings.
+      2. Open Telegram, send /start (or anything) to the bot.
+      3. Click 'Auto-detect chat ID' — this endpoint runs.
+
+    We look at the most recent update and extract chat.id. If nothing
+    comes back, the user probably hasn't messaged the bot yet, or
+    another poller consumed the queue. In either case we return a
+    helpful error rather than silently saving 0.
+    """
+    import httpx
+    cfg = await get_or_create_config(session)
+    if not cfg.telegram_bot_token_enc:
+        return {"ok": False, "error": "Bot token not set. Save it first."}
+    try:
+        token = decrypt_secret(cfg.telegram_bot_token_enc)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"Cannot decrypt token: {e}"}
+
+    url = f"https://api.telegram.org/bot{token}/getUpdates"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"HTTP error: {e}"}
+
+    if resp.status_code != 200:
+        return {
+            "ok": False,
+            "error": f"Telegram API returned {resp.status_code}: {resp.text[:200]}",
+        }
+
+    data = resp.json()
+    updates = data.get("result", [])
+    if not updates:
+        return {
+            "ok": False,
+            "error": (
+                "No messages found. Send any message to your bot on "
+                "Telegram (e.g. /start), then click this button again. "
+                "If it still fails, another process may have polled the "
+                "queue empty — talk to @userinfobot for a manual lookup."
+            ),
+        }
+
+    # Walk updates newest-first, pick the first one that has a private chat id.
+    chat_id: int | None = None
+    for update in reversed(updates):
+        for key in ("message", "edited_message", "channel_post", "callback_query"):
+            payload = update.get(key)
+            if not payload:
+                continue
+            chat = payload.get("chat") or payload.get("from")
+            if chat and "id" in chat:
+                chat_id = chat["id"]
+                break
+        if chat_id is not None:
+            break
+
+    if chat_id is None:
+        return {
+            "ok": False,
+            "error": "Updates contain no chat/from IDs. Send a normal message (not a system event) to the bot and try again.",
+        }
+
+    cfg.telegram_chat_id = str(chat_id)
+    session.add(cfg)
+    await session.commit()
+    await session.refresh(cfg)
+    return {"ok": True, "chat_id": str(chat_id), "error": None}
+
+
 @router.post("/telegram/test")
 async def send_test_telegram(session: SessionDep) -> dict:
     """Try to send a hello-world message with the CURRENTLY stored token.

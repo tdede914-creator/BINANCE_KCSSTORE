@@ -354,6 +354,11 @@ export const api = {
       "/api/config/telegram/test",
       { method: "POST" },
     ),
+  detectTelegramChatId: () =>
+    request<{ ok: boolean; chat_id?: string; error: string | null }>(
+      "/api/config/telegram/detect-chat-id",
+      { method: "POST" },
+    ),
 
   // ----- Signals -----
   listSignals: (params: { limit?: number; symbol?: string } = {}) => {
