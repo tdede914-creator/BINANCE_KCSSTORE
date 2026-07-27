@@ -28,9 +28,6 @@ class SignalProposal:
     stop_loss: float
     take_profit_1: float
     take_profit_2: float
-    # Optional third target — surfaced in the signal card + Telegram
-    # message for manual reference. 0.0 means "no TP3 configured".
-    take_profit_3: float = 0.0
 
     # Timeframes used
     bias_tf: str
@@ -38,8 +35,15 @@ class SignalProposal:
     entry_tf: str
 
     confidence: float  # 0..1
+    # ---- Optional / defaulted fields ----
+    # Python dataclasses require that any field without a default value
+    # appears BEFORE any field with one — that's why the block below
+    # lives at the bottom.
     reason: str = ""
     diagnostics: dict = field(default_factory=dict)
+    # Optional third target — surfaced in the signal card + Telegram
+    # message for manual reference. 0.0 means "no TP3 configured".
+    take_profit_3: float = 0.0
     # Which strategy generated this signal. Free-form string so we can
     # add new strategies without touching an enum. Currently:
     #   "mtf_confluence" — trend-following pullback (our original)
