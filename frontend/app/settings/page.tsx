@@ -26,17 +26,40 @@ const CRYPTO_SUGGESTIONS = [
   "ARBUSDT",
   "APTUSDT",
 ];
+// Preset watchlists for signals-only (Exness / MT5 / TradingView style).
+// Each preset can be applied to the Forex watchlist by clicking its chip.
+const SIGNAL_PRESETS: { label: string; hint: string; symbols: string[] }[] = [
+  {
+    label: "FX majors",
+    hint: "The 7 most-liquid FX pairs — tightest spreads on Exness.",
+    symbols: ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCHF", "USDCAD", "NZDUSD"],
+  },
+  {
+    label: "Metals + oil",
+    hint: "Gold, silver, WTI and Brent — same tickers TradingView uses.",
+    symbols: ["XAUUSD", "XAGUSD", "USOIL", "UKOIL"],
+  },
+  {
+    label: "Global indices",
+    hint: "S&P 500, Nasdaq 100, Dow, DAX, FTSE, Nikkei via Exness-style tickers.",
+    symbols: ["US500", "US100", "US30", "GER30", "UK100", "JPN225"],
+  },
+  {
+    label: "Popular US stocks",
+    hint: "Blue chips — TwelveData quotes them on the free plan.",
+    symbols: ["AAPL", "TSLA", "NVDA", "MSFT", "META", "AMZN", "GOOGL"],
+  },
+];
+
 const FOREX_SUGGESTIONS = [
-  "XAUUSD",
-  "EURUSD",
-  "GBPUSD",
-  "GBPJPY",
-  "AUDUSD",
-  "USDJPY",
-  "USDCAD",
-  "NZDUSD",
-  "EURJPY",
-  "AUDJPY",
+  // FX majors
+  "XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
+  // Metals & oil
+  "XAGUSD", "USOIL", "UKOIL",
+  // Indices
+  "US500", "US100", "US30", "GER30", "UK100", "JPN225",
+  // Popular stocks
+  "AAPL", "TSLA", "NVDA", "MSFT",
 ];
 
 export default function SettingsPage() {
@@ -469,14 +492,36 @@ export default function SettingsPage() {
         />
       </Section>
 
-      {/* Watchlist — Forex */}
+      {/* Watchlist — Forex / signals-only */}
       <Section
-        title="Forex Watchlist"
-        hint="FX / commodity pairs (MT5-style, no slash) scanned when Market Mode = Forex. TwelveData supports popular pairs like XAUUSD, EURUSD, GBPUSD, GBPJPY, AUDUSD, USDJPY, USDCAD, NZDUSD, and more."
+        title="Signals-only watchlist (Exness / MT5 / TradingView)"
+        hint="Symbols scanned when Market Mode = Forex. No auto-execution — the bot only produces signals; you enter each trade manually in Exness, MT5, or TradingView. Supports FX pairs, metals (XAU/XAG), oil (USOIL/UKOIL), indices (US500/US100/US30/GER30/UK100/JPN225) and US stocks via TwelveData."
       >
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          <span className="text-xs text-muted self-center mr-1">
+            Load preset:
+          </span>
+          {SIGNAL_PRESETS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() =>
+                patch({
+                  forex_watchlist: Array.from(
+                    new Set([...(cfg.forex_watchlist ?? []), ...p.symbols]),
+                  ),
+                })
+              }
+              disabled={saving}
+              title={p.hint}
+              className="text-[11px] font-semibold px-2.5 py-1 rounded border bg-bg-soft border-border text-muted hover:text-white transition-colors disabled:opacity-50"
+            >
+              + {p.label}
+            </button>
+          ))}
+        </div>
         <WatchlistEditor
           initial={cfg.forex_watchlist}
-          placeholder="Add an FX pair (e.g. XAUUSD)"
+          placeholder="Add a symbol (e.g. XAUUSD, US500, USOIL, AAPL)"
           suggestions={FOREX_SUGGESTIONS}
           disabled={saving}
           onSave={async (list) => {

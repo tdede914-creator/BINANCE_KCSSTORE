@@ -128,7 +128,15 @@ class UserConfig(SQLModel, table=True):
         )
     )
     forex_watchlist_csv: str = Field(
-        default="XAUUSD,EURUSD,GBPUSD,GBPJPY,AUDUSD,USDJPY,USDCAD,NZDUSD"
+        # Signals-only mode default — a mix of what Exness / MT5 traders
+        # most commonly follow: FX majors, gold, indices, oil. All these
+        # symbols resolve automatically via TwelveDataSource._format_symbol
+        # (US500 → SPX, USOIL → WTI, etc.), so users can type the Exness
+        # ticker directly.
+        default=(
+            "XAUUSD,EURUSD,GBPUSD,USDJPY,AUDUSD,"
+            "US500,US100,US30,USOIL"
+        )
     )
 
     # Multi-timeframe

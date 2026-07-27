@@ -42,8 +42,48 @@ INTERVAL_MAP = {
 }
 
 
-# Currency codes that must NOT be sliced 3+3. Extend if needed.
-_LONG_BASES = {"XAG", "XAU", "XPT", "XPD"}   # commodities priced in /USD
+# Metals priced against USD — base of 3 chars, quote appended.
+_METAL_BASES = {"XAG", "XAU", "XPT", "XPD"}
+
+# Symbols that TwelveData accepts as-is (no slash). Includes:
+#   * indices — S&P 500 (SPX), Nasdaq (NDX), Dow (DJI), UK (FTSE),
+#     Germany (DAX), Japan (N225), Hong Kong (HSI)
+#   * energies — WTI crude (WTI), Brent (BRENT), natural gas (NG)
+#   * common Exness-style aliases we map into TwelveData equivalents
+#     via _EXNESS_TO_TD below.
+_ATOMIC_SYMBOLS = {
+    # Indices
+    "SPX", "NDX", "DJI", "FTSE", "DAX", "N225", "HSI", "STOXX50E",
+    # Energies
+    "WTI", "BRENT", "NG",
+}
+
+# Exness / MT5 conventions that we translate to TwelveData names.
+# The dashboard accepts either the Exness ticker OR the TwelveData
+# one — this keeps the UX broker-familiar.
+_EXNESS_TO_TD = {
+    # Indices (Exness naming → TwelveData)
+    "US500": "SPX",
+    "SPX500": "SPX",
+    "US100": "NDX",
+    "NAS100": "NDX",
+    "USTEC": "NDX",
+    "US30": "DJI",
+    "WS30": "DJI",
+    "UK100": "FTSE",
+    "GER30": "DAX",
+    "GER40": "DAX",
+    "JPN225": "N225",
+    "HK50": "HSI",
+    # Energies
+    "USOIL": "WTI",
+    "UKOIL": "BRENT",
+    "XTIUSD": "WTI",
+    "XBRUSD": "BRENT",
+    # Silver / platinum aliases
+    "SILVER": "XAG/USD",
+    "GOLD": "XAU/USD",
+}
 
 
 class TwelveDataSource(MarketDataSource):
@@ -68,20 +108,51 @@ class TwelveDataSource(MarketDataSource):
 
     @staticmethod
     def _format_symbol(symbol: str) -> str:
-        """Convert MT5-style ``XAUUSD`` → TwelveData ``XAU/USD``.
+        """Normalise a user-typed ticker into a TwelveData symbol.
 
-        Already-slashed symbols and unusual shapes are passed through.
+        Handled shapes (all case-insensitive):
+            * ``EURUSD``        → ``EUR/USD``          (FX pair)
+            * ``EUR/USD``       → ``EUR/USD``          (already slashed)
+            * ``XAUUSD``        → ``XAU/USD``          (metal vs USD)
+            * ``SPX``           → ``SPX``              (index, atomic)
+            * ``US500``         → ``SPX``              (Exness alias)
+            * ``NAS100``        → ``NDX``              (Exness alias)
+            * ``USOIL``         → ``WTI``              (energy alias)
+            * ``GOLD``          → ``XAU/USD``          (alias)
+            * ``AAPL``          → ``AAPL``             (stock — passthrough)
+
+        Unknown 3-4 char tickers are passed through untouched — TwelveData
+        supports thousands of stock symbols, so treating them as atomic
+        is the right default.
         """
         s = symbol.upper().strip()
+        if not s:
+            return s
+
+        # 1. Exness-style aliases — translate first so the mapped value
+        #    then falls through the rest of the normalisation.
+        if s in _EXNESS_TO_TD:
+            s = _EXNESS_TO_TD[s]
+
+        # 2. Already slashed — trust the user.
         if "/" in s:
             return s
-        # Base of 3 chars (typical FX): "EURUSD" -> "EUR/USD"
-        if len(s) == 6:
-            return f"{s[:3]}/{s[3:]}"
-        # Commodities where the base is 3 chars against USD.
-        for base in _LONG_BASES:
+
+        # 3. Metals vs USD — "XAUUSD" -> "XAU/USD"
+        for base in _METAL_BASES:
             if s.startswith(base) and len(s) > 3:
                 return f"{base}/{s[len(base):]}"
+
+        # 4. Atomic (indices / oil / other single-symbol tickers).
+        if s in _ATOMIC_SYMBOLS:
+            return s
+
+        # 5. Six-char FX pair → slash it.
+        if len(s) == 6 and s.isalpha():
+            return f"{s[:3]}/{s[3:]}"
+
+        # 6. Fallback — assume stock ticker or something TwelveData
+        #    knows by its raw name.
         return s
 
     # ------------------------------------------------------------------
