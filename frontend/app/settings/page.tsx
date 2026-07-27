@@ -279,10 +279,40 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Signals-only master switch */}
+      <Section
+        title="Signals-only mode"
+        hint="When ON the bot never places any order on Binance. Scanner + Telegram alerts still fire so you can trade manually on Binance app, Exness, MT5, TradingView — anywhere. Safest way to run while validating strategy or when Binance-side auto-execution is unreliable."
+      >
+        <label className="flex items-start gap-3 p-4 bg-bg-soft border border-border rounded cursor-pointer">
+          <input
+            type="checkbox"
+            checked={cfg.signal_only_mode}
+            onChange={(e) => patch({ signal_only_mode: e.target.checked })}
+            disabled={saving}
+            className="mt-1 w-4 h-4"
+          />
+          <div>
+            <div className="text-sm font-semibold">
+              {cfg.signal_only_mode
+                ? "🔔 Signals only — bot will NOT execute any trades"
+                : "Auto-execute active — bot places real orders in LIVE / paper trades in PAPER"}
+            </div>
+            <div className="text-xs text-muted mt-1 leading-relaxed">
+              When ON, every fired signal is delivered to the Signals
+              page + Telegram (with Entry, SL, TP1/2/3) but no market
+              order is sent to Binance. Use this if you want a
+              read-only signal feed and prefer manual execution — same
+              workflow as popular Telegram signal channels.
+            </div>
+          </div>
+        </label>
+      </Section>
+
       {/* Execution head-start */}
       <Section
         title="Execution head-start"
-        hint="Postpone LIVE auto-execute by N seconds after the signal alert goes out — gives you a window to place manual orders on Exness / MT5, or to cancel the signal from Signals page before real capital moves."
+        hint="Postpone LIVE auto-execute by N seconds after the signal alert goes out — gives you a window to place manual orders on Exness / MT5, or to cancel the signal from Signals page before real capital moves. (No effect when Signals-only mode is on.)"
       >
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
           <Field

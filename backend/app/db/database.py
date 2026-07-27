@@ -76,6 +76,8 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("user_config", "telegram_balance_interval_min", "INTEGER NOT NULL DEFAULT 60"),
     # Head-start window before LIVE auto-execution kicks in.
     ("user_config", "signal_execute_delay_seconds", "INTEGER NOT NULL DEFAULT 0"),
+    # Signals-only master switch: fire alerts, never execute.
+    ("user_config", "signal_only_mode", "BOOLEAN NOT NULL DEFAULT FALSE"),
 )
 
 

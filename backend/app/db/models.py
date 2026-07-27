@@ -224,6 +224,23 @@ class UserConfig(SQLModel, table=True):
     # ---------------------------------------------------------------
     signal_execute_delay_seconds: int = Field(default=0)
 
+    # ---------------------------------------------------------------
+    # Signals-only mode.
+    #
+    # When True, the scanner fires signals + notifies (Telegram,
+    # dashboard, WebSocket) but DOES NOT execute any orders on
+    # Binance. Behaves like the existing FOREX mode does today:
+    # the user reads the signal (Entry / SL / TP1/2/3) and decides
+    # whether to place the trade manually on Binance, Exness, MT5,
+    # or wherever else.
+    #
+    # This is the safest way to run the bot without risking any
+    # capital to the executor logic — useful while validating
+    # strategy quality or while a Binance-side issue (e.g. -4120
+    # policy change) makes auto-execution unreliable.
+    # ---------------------------------------------------------------
+    signal_only_mode: bool = Field(default=False)
+
     # Trailing stop
     trailing_mode: TrailingMode = Field(default=TrailingMode.OFF)
     # RR (in units of initial risk) that price must move in favor before

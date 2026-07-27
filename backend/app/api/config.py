@@ -92,6 +92,7 @@ class ConfigOut(BaseModel):
     telegram_notify_hourly_balance: bool
     telegram_balance_interval_min: int
     signal_execute_delay_seconds: int
+    signal_only_mode: bool
 
 
 class ConfigUpdate(BaseModel):
@@ -148,6 +149,7 @@ class ConfigUpdate(BaseModel):
     telegram_notify_hourly_balance: bool | None = None
     telegram_balance_interval_min: int | None = Field(default=None, ge=5, le=1440)
     signal_execute_delay_seconds: int | None = Field(default=None, ge=0, le=300)
+    signal_only_mode: bool | None = None
 
 
 class TelegramTokenUpdate(BaseModel):
@@ -215,6 +217,7 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
         telegram_notify_hourly_balance=cfg.telegram_notify_hourly_balance,
         telegram_balance_interval_min=cfg.telegram_balance_interval_min,
         signal_execute_delay_seconds=cfg.signal_execute_delay_seconds,
+        signal_only_mode=cfg.signal_only_mode,
         trailing_mode=cfg.trailing_mode,
         trailing_activation_rr=cfg.trailing_activation_rr,
         trailing_atr_mult=cfg.trailing_atr_mult,

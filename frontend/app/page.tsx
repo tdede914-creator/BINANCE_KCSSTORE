@@ -315,12 +315,17 @@ export default function DashboardPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Dashboard</h1>
-          {cfg?.trading_mode === "live" && cfg?.market_mode === "crypto" && (
-            <LiveReadinessBadge />
+          {cfg?.signal_only_mode && (
+            <div className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded bg-yellow-500/15 border border-yellow-400/50 text-yellow-300">
+              🔔 SIGNALS ONLY · bot won't execute
+            </div>
           )}
+          {cfg?.trading_mode === "live" &&
+            cfg?.market_mode === "crypto" &&
+            !cfg?.signal_only_mode && <LiveReadinessBadge />}
           <p className="text-sm text-muted">
             {cfg
-              ? `Mode: ${cfg.trading_mode.toUpperCase()} · Scanner ${
+              ? `Mode: ${cfg.trading_mode.toUpperCase()}${cfg.signal_only_mode ? " · SIGNALS ONLY" : ""} · Scanner ${
                   cfg.scanner_enabled ? "ON" : "OFF"
                 } · TFs ${cfg.bias_tf}/${cfg.setup_tf}/${cfg.entry_tf}`
               : "Loading…"}

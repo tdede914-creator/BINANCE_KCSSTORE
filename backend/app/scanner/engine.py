@@ -387,14 +387,20 @@ class ScannerEngine:
             )
             return
 
-        # -------------- FOREX: signals-only path --------------
-        if cfg.market_mode == MarketMode.FOREX:
+        # -------------- Signals-only path --------------
+        # Either the market is FOREX (we don't have an executor for it)
+        # or the user has enabled the signal_only_mode master switch
+        # to run the bot as a pure Telegram-style signal feed with
+        # zero auto-execution. Same DB path either way: save a signal
+        # with quantity/risk = 0, notify, and return.
+        if cfg.market_mode == MarketMode.FOREX or cfg.signal_only_mode:
             signal = await self._save_forex_signal(proposal, cfg)
             log.info(
-                "scanner.signal.forex",
+                "scanner.signal.signal_only" if cfg.signal_only_mode else "scanner.signal.forex",
                 symbol=symbol,
                 side=proposal.side.value,
                 confidence=proposal.confidence,
+                mode="signal_only" if cfg.signal_only_mode else cfg.market_mode.value,
             )
             await event_bus.publish(
                 {
@@ -1068,7 +1074,12 @@ async def _notify_signal(
         return
     try:
         body = tg_notifier.render_signal(signal)
-        if execute_delay_s > 0 and cfg.trading_mode.value == "live":
+        if cfg.signal_only_mode:
+            body += (
+                "\n\n🔔 _Signals-only mode — no auto-execute._ "
+                "Place the trade manually on Binance / Exness / MT5 if you like the setup."
+            )
+        elif execute_delay_s > 0 and cfg.trading_mode.value == "live":
             body += (
                 f"\n\n⏳ Auto-execute in {execute_delay_s}s. "
                 "Cancel from dashboard if you want to sit this one out."
