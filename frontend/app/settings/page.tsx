@@ -279,6 +279,9 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* MT5 Bridge (Windows executor for forex) */}
+      <Mt5BridgeSection cfg={cfg} />
+
       {/* Signals-only master switch */}
       <Section
         title="Signals-only mode"
@@ -883,6 +886,116 @@ export default function SettingsPage() {
 }
 
 /* ---------- small building blocks ---------- */
+
+// ---------------------------------------------------------------------------
+// MT5 Bridge — displays the shared secret + heartbeat status for the
+// Windows-side bridge script that executes forex signals via Exness MT5.
+// This section is READ-ONLY (nothing to edit from the web) — the user
+// just copies the secret into their config.py on the Windows VPS.
+// ---------------------------------------------------------------------------
+function Mt5BridgeSection({ cfg }: { cfg: Config }) {
+  const heartbeat = cfg.mt5_bridge_last_heartbeat;
+  const alive = heartbeat && (Date.now() - new Date(heartbeat).getTime() < 60_000);
+  const [copied, setCopied] = useState(false);
+
+  const copySecret = async () => {
+    try {
+      await navigator.clipboard.writeText(cfg.mt5_bridge_secret);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      window.prompt("Copy secret:", cfg.mt5_bridge_secret);
+    }
+  };
+
+  return (
+    <Section
+      title="MT5 Bridge (Exness Windows VPS)"
+      hint="Auto-execute forex signals via MetaTrader 5 on a Windows VPS. Runs alongside this backend; polls signals + places orders in your Exness account."
+    >
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted">Status:</span>
+          {alive ? (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-long">
+              🟢 Bridge online — last ping{" "}
+              {heartbeat ? new Date(heartbeat).toLocaleTimeString() : "—"}
+            </span>
+          ) : heartbeat ? (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-yellow-300">
+              🟡 Silent — last ping{" "}
+              {new Date(heartbeat).toLocaleString()}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-muted">
+              ⚪ Never connected — bridge not running yet
+            </span>
+          )}
+        </div>
+
+        <div>
+          <div className="text-xs text-muted mb-1">
+            Bridge secret (paste into <code className="text-white">config.py</code> on Windows VPS)
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 text-xs font-mono bg-bg-soft border border-border rounded px-2.5 py-2 truncate">
+              {cfg.mt5_bridge_secret || "generating…"}
+            </code>
+            <button
+              onClick={copySecret}
+              disabled={!cfg.mt5_bridge_secret}
+              className="text-xs font-semibold px-2.5 py-2 rounded border bg-bg-soft border-border text-muted hover:text-white disabled:opacity-50"
+            >
+              {copied ? "✓" : "Copy"}
+            </button>
+          </div>
+        </div>
+
+        <details className="text-xs text-muted bg-bg-soft border border-border rounded p-3">
+          <summary className="cursor-pointer text-white font-semibold">
+            Setup steps (Windows VPS)
+          </summary>
+          <ol className="mt-2 space-y-2 list-decimal pl-4 leading-relaxed">
+            <li>
+              Install MetaTrader 5 (Exness build) on Windows VPS, login to
+              your Exness account, and press <code className="text-white">Ctrl+E</code> to
+              enable AutoTrading.
+            </li>
+            <li>
+              Install Python 3.11+ with "Add Python to PATH" checked.
+            </li>
+            <li>
+              Copy the <code className="text-white">mt5_bridge/</code> folder from this
+              repo to the Windows VPS (e.g. <code className="text-white">C:\kcs_bridge</code>).
+              Run <code className="text-white">pip install -r requirements.txt</code>.
+            </li>
+            <li>
+              <code className="text-white">copy config.example.py config.py</code> then edit
+              <code className="text-white">config.py</code>: paste the secret above, add your
+              MT5 login / password / server (from Exness), keep
+              <code className="text-white">DRY_RUN = True</code> for the first run.
+            </li>
+            <li>
+              Run <code className="text-white">python bridge.py</code>. Should print
+              "MT5 lists N symbols" and start polling. Status pill above
+              turns green within 10 seconds.
+            </li>
+            <li>
+              Watch for one signal to fire; confirm the bridge log shows
+              <code className="text-white">FILLED signal #X …</code> with a DRY ticket. Then
+              switch DRY_RUN to False for real trading.
+            </li>
+          </ol>
+          <div className="mt-2 text-[10px] text-muted/70">
+            Full guide (with troubleshooting) is in{" "}
+            <code className="text-white">mt5_bridge/README.md</code> in the repo.
+          </div>
+        </details>
+      </div>
+    </Section>
+  );
+}
+
 
 // ---------------------------------------------------------------------------
 // Telegram Notifications

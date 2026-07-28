@@ -12,6 +12,8 @@ from app.api.deps import SessionDep, get_or_create_config
 from app.binance.rest import VALID_TIMEFRAMES, BinanceREST
 from sqlalchemy import delete, update
 
+from datetime import datetime
+
 from app.core.logging import get_logger
 from app.core.security import decrypt_secret, encrypt_secret, mask_key
 from app.db.models import MarketMode, Signal, Trade, TradingMode, TrailingMode, UserConfig
@@ -93,6 +95,10 @@ class ConfigOut(BaseModel):
     telegram_balance_interval_min: int
     signal_execute_delay_seconds: int
     signal_only_mode: bool
+
+    # MT5 bridge (Windows executor for forex)
+    mt5_bridge_secret: str
+    mt5_bridge_last_heartbeat: datetime | None
 
 
 class ConfigUpdate(BaseModel):
@@ -218,6 +224,8 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
         telegram_balance_interval_min=cfg.telegram_balance_interval_min,
         signal_execute_delay_seconds=cfg.signal_execute_delay_seconds,
         signal_only_mode=cfg.signal_only_mode,
+        mt5_bridge_secret=cfg.mt5_bridge_secret,
+        mt5_bridge_last_heartbeat=cfg.mt5_bridge_last_heartbeat,
         trailing_mode=cfg.trailing_mode,
         trailing_activation_rr=cfg.trailing_activation_rr,
         trailing_atr_mult=cfg.trailing_atr_mult,
@@ -232,6 +240,14 @@ def _to_out(cfg: UserConfig) -> ConfigOut:
 @router.get("", response_model=ConfigOut)
 async def read_config(session: SessionDep) -> ConfigOut:
     cfg = await get_or_create_config(session)
+    # Bootstrap the MT5 bridge secret on first read so the Windows
+    # client has a stable token from install one.
+    if not cfg.mt5_bridge_secret:
+        import secrets
+        cfg.mt5_bridge_secret = secrets.token_urlsafe(24)
+        session.add(cfg)
+        await session.commit()
+        await session.refresh(cfg)
     return _to_out(cfg)
 
 

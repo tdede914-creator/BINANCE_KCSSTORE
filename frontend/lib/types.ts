@@ -74,6 +74,9 @@ export interface Config {
   telegram_balance_interval_min: number;
   signal_execute_delay_seconds: number;
   signal_only_mode: boolean;
+  // MT5 bridge (Windows executor for forex)
+  mt5_bridge_secret: string;
+  mt5_bridge_last_heartbeat: string | null;
 }
 
 export interface Signal {

@@ -78,6 +78,13 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("user_config", "signal_execute_delay_seconds", "INTEGER NOT NULL DEFAULT 0"),
     # Signals-only master switch: fire alerts, never execute.
     ("user_config", "signal_only_mode", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    # MT5 bridge (Windows-side executor for forex).
+    ("user_config", "mt5_bridge_secret", "VARCHAR NOT NULL DEFAULT ''"),
+    ("user_config", "mt5_bridge_last_heartbeat", "TIMESTAMP WITH TIME ZONE"),
+    ("signals", "mt5_ticket", "VARCHAR"),
+    ("signals", "mt5_fill_price", "DOUBLE PRECISION"),
+    ("signals", "mt5_lot", "DOUBLE PRECISION"),
+    ("signals", "mt5_error", "VARCHAR"),
 )
 
 

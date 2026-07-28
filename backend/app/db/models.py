@@ -241,6 +241,14 @@ class UserConfig(SQLModel, table=True):
     # ---------------------------------------------------------------
     signal_only_mode: bool = Field(default=False)
 
+    # ---------------------------------------------------------------
+    # MT5 bridge — auth token the Windows-side bridge uses when it
+    # polls the Linux backend for forex signals. Auto-generated on
+    # first GET /api/config.
+    # ---------------------------------------------------------------
+    mt5_bridge_secret: str = Field(default="")
+    mt5_bridge_last_heartbeat: datetime | None = Field(default=None)
+
     # Trailing stop
     trailing_mode: TrailingMode = Field(default=TrailingMode.OFF)
     # RR (in units of initial risk) that price must move in favor before
@@ -286,6 +294,14 @@ class Signal(SQLModel, table=True):
     take_profit_2: float
     # Optional third target — nullable for backward compatibility.
     take_profit_3: float | None = Field(default=None)
+
+    # MT5-bridge execution tracking (forex only). NULL when the signal
+    # hasn't been picked up by the Windows bridge yet. When set, the
+    # bridge has attempted execution; mt5_error is populated on failure.
+    mt5_ticket: str | None = Field(default=None)
+    mt5_fill_price: float | None = Field(default=None)
+    mt5_lot: float | None = Field(default=None)
+    mt5_error: str | None = Field(default=None)
 
     # Sizing
     leverage: int = Field(default=5)
