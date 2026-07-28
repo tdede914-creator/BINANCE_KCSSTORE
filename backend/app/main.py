@@ -14,6 +14,7 @@ from app.api import (
     config as config_router,
     live_readiness as live_readiness_router,
     market,
+    screener as screener_router,
     scanner as scanner_router,
     signals,
     trades,
@@ -96,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(backtest_router.router, prefix="/api/backtest", tags=["backtest"])
     app.include_router(wallet_router.router, prefix="/api/wallet", tags=["wallet"])
     app.include_router(live_readiness_router.router, prefix="/api/live", tags=["live"])
+    app.include_router(screener_router.router, prefix="/api/screener", tags=["screener"])
     app.include_router(ws.router, prefix="/ws", tags=["ws"])
 
     @app.get("/", tags=["root"])

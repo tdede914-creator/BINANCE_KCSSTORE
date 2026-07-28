@@ -91,6 +91,26 @@ export interface LiveReadiness {
   balance_usdt: number | null;
 }
 
+export interface MemeScreenerRow {
+  symbol: string;
+  price: number;
+  price_change_24h_pct: number;
+  price_change_7d_pct: number;
+  volume_24h_usdt: number;
+  vol_ratio: number;
+  squeeze_ratio: number;
+  funding_rate_pct: number;
+  score: number;
+  reason: string;
+  error: string | null;
+}
+
+export interface MemeScreenerResponse {
+  generated_at: string;
+  disclaimer: string;
+  rows: MemeScreenerRow[];
+}
+
 export interface BacktestStrategyParams {
   ema_fast?: number;
   ema_slow?: number;
@@ -380,6 +400,10 @@ export const api = {
   // ----- LIVE-mode readiness pre-flight -----
   liveReadiness: () =>
     request<LiveReadiness>("/api/live/live-readiness"),
+
+  // ----- Meme-coin screener -----
+  memecoinScreener: () =>
+    request<MemeScreenerResponse>("/api/screener/memecoins"),
 
   // ----- Signals -----
   listSignals: (params: { limit?: number; symbol?: string } = {}) => {

@@ -105,6 +105,20 @@ class BinanceREST:
     # Public endpoints
     # ----------------------------------------------------------------------
 
+    async def get_24h_ticker(self, symbol: str) -> dict:
+        """24h rolling stats for a symbol. Public endpoint, no auth."""
+        r = await self._client.get("/fapi/v1/ticker/24hr", params={"symbol": symbol.upper()})
+        r.raise_for_status()
+        return r.json()
+
+    async def get_funding_rate(self, symbol: str) -> dict | None:
+        """Latest funding rate row for a perp. Public endpoint, no auth."""
+        r = await self._client.get(
+            "/fapi/v1/premiumIndex", params={"symbol": symbol.upper()}
+        )
+        r.raise_for_status()
+        return r.json()
+
     async def get_klines(
         self,
         symbol: str,
